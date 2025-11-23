@@ -136,24 +136,22 @@ class SimpleSchoolBot:
         return text[:max_length-3] + "..."
     
     def send_message(self, chat_id, text, reply_markup=None):
-        """Отправка сообщения через Telegram API с проверкой безопасности"""
-        safe_text = self.truncate_message(self.safe_message(text))
-        
-        url = f"{BASE_URL}/sendMessage"
-        data = {
-            "chat_id": chat_id,
-            "text": safe_text,
-            "parse_mode": "HTML"
-        }
-        if reply_markup:
-            data["reply_markup"] = reply_markup
-        
-        try:
-            response = requests.post(url, json=data, timeout=10)
-            return response.json()
-        except Exception as e:
-            logger.error(f"Ошибка отправки сообщения: {e}")
-            return None
+    """Отправка сообщения через Telegram API"""
+    url = f"{BASE_URL}/sendMessage"
+    data = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML"  # ✅ Это должно быть "HTML"
+    }
+    if reply_markup:
+        data["reply_markup"] = reply_markup
+    
+    try:
+        response = requests.post(url, json=data, timeout=10)
+        return response.json()
+    except Exception as e:
+        logger.error(f"Ошибка отправки сообщения: {e}")
+        return None
     
     def log_security_event(self, event_type, user_id, details):
         """Логирование событий безопасности"""
