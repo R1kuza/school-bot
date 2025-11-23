@@ -8,30 +8,25 @@ from datetime import datetime
 from html import escape
 from collections import defaultdict
 
-# Загрузка переменных окружения
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass  # python-dotenv не установлен, используем системные переменные
+    pass
 
-# Настройки
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 if not BOT_TOKEN:
     logging.error("BOT_TOKEN environment variable is not set!")
     exit(1)
 
-# Список администраторов из переменных окружения
 ADMINS = [admin.strip() for admin in os.environ.get('ADMINS', 'r1kuza,nadya_yakovleva01,Priikalist').split(',') if admin.strip()]
 
-# Конфигурация безопасности
 MAX_MESSAGE_LENGTH = 4000
 MAX_USERS_PER_CLASS = 30
 MAX_REQUESTS_PER_MINUTE = 20
 
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -39,18 +34,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class RateLimiter:
-    """Класс для ограничения частоты запросов"""
     def __init__(self, max_requests=MAX_REQUESTS_PER_MINUTE, window=60):
         self.requests = defaultdict(list)
         self.max_requests = max_requests
         self.window = window
     
     def is_limited(self, user_id):
-        """Проверка, превышен ли лимит запросов"""
         now = time.time()
         user_requests = self.requests[user_id]
-        
-        # Удаляем старые запросы
         user_requests = [req for req in user_requests if now - req < self.window]
         
         if len(user_requests) >= self.max_requests:
@@ -69,14 +60,12 @@ class SimpleSchoolBot:
         self.init_db()
     
     def init_db(self):
-        """Инициализация базы данных"""
         db_path = os.environ.get('DATABASE_PATH', 
                                 os.path.join(os.path.dirname(os.path.abspath(__file__)), "school_bot.db"))
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.create_tables()
     
     def create_tables(self):
-        """Создание таблиц"""
         cursor = self.conn.cursor()
         cursor.executescript("""
             CREATE TABLE IF NOT EXISTS users (
@@ -123,52 +112,45 @@ class SimpleSchoolBot:
         
         self.conn.commit()
     
-def safe_message(self, text):
-    """Экранирование HTML-символов, но оставляем наши теги"""
-    if not text:
-        return ""
-    # Экранируем только опасные символы, но не ломаем наши теги
-    text = str(text)
-    # Заменяем наши теги на временные метки
-    text = text.replace('<b>', '___BOLD_OPEN___')
-    text = text.replace('</b>', '___BOLD_CLOSE___')
-    # Экранируем весь текст
-    text = escape(text)
-    # Возвращаем наши теги обратно
-    text = text.replace('___BOLD_OPEN___', '<b>')
-    text = text.replace('___BOLD_CLOSE___', '</b>')
-    return text
+    def safe_message(self, text):
+        if not text:
+            return ""
+        text = str(text)
+        text = text.replace('<b>', '___BOLD_OPEN___')
+        text = text.replace('</b>', '___BOLD_CLOSE___')
+        text = escape(text)
+        text = text.replace('___BOLD_OPEN___', '<b>')
+        text = text.replace('___BOLD_CLOSE___', '</b>')
+        return text
     
     def truncate_message(self, text, max_length=MAX_MESSAGE_LENGTH):
-        """Обрезка сообщения до максимальной длины"""
         if len(text) <= max_length:
             return text
         return text[:max_length-3] + "..."
     
     def send_message(self, chat_id, text, reply_markup=None):
-    """Отправка сообщения через Telegram API"""
-    url = f"{BASE_URL}/sendMessage"
-    data = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML"  # ✅ Это должно быть "HTML"
-    }
-    if reply_markup:
-        data["reply_markup"] = reply_markup
-    
-    try:
-        response = requests.post(url, json=data, timeout=10)
-        return response.json()
-    except Exception as e:
-        logger.error(f"Ошибка отправки сообщения: {e}")
-        return None
+        safe_text = self.truncate_message(self.safe_message(text))
+        
+        url = f"{BASE_URL}/sendMessage"
+        data = {
+            "chat_id": chat_id,
+            "text": safe_text,
+            "parse_mode": "HTML"
+        }
+        if reply_markup:
+            data["reply_markup"] = reply_markup
+        
+        try:
+            response = requests.post(url, json=data, timeout=10)
+            return response.json()
+        except Exception as e:
+            logger.error(f"Ошибка отправки сообщения: {e}")
+            return None
     
     def log_security_event(self, event_type, user_id, details):
-        """Логирование событий безопасности"""
         logger.warning(f"SECURITY: {event_type} - User: {user_id} - {details}")
     
     def get_updates(self):
-        """Получение обновлений через Telegram API"""
         url = f"{BASE_URL}/getUpdates"
         params = {
             "offset": self.last_update_id + 1,
@@ -181,7 +163,7 @@ def safe_message(self, text):
             result = response.json()
             
             if not result.get("ok") and "Conflict" in str(result.get("description", "")):
-                logger.warning("Обнаружен конфликт getUpdates - другой экземпляр бота запущен")
+                logger.warning("Обнаружен конфликт getUpdates")
                 return {"ok": False, "conflict": True}
                 
             return result
@@ -190,7 +172,6 @@ def safe_message(self, text):
             return {"ok": False}
     
     def get_user(self, user_id):
-        """Получение пользователя из БД"""
         if not self.is_valid_user_id(user_id):
             return None
             
@@ -199,15 +180,12 @@ def safe_message(self, text):
         return cursor.fetchone()
     
     def is_valid_user_id(self, user_id):
-        """Проверка корректности user_id"""
         return isinstance(user_id, int) and user_id > 0
     
     def create_user(self, user_id, full_name, class_name):
-        """Создание пользователя с проверкой лимитов"""
         if not self.is_valid_user_id(user_id):
             return False
             
-        # Проверка лимита пользователей в классе
         cursor = self.conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM users WHERE class = ?", (class_name,))
         count = cursor.fetchone()[0]
@@ -224,7 +202,6 @@ def safe_message(self, text):
         return True
     
     def delete_user(self, user_id):
-        """Удаление пользователя"""
         if not self.is_valid_user_id(user_id):
             return False
             
@@ -234,13 +211,11 @@ def safe_message(self, text):
         return cursor.rowcount > 0
     
     def get_all_users(self):
-        """Получение всех пользователей"""
         cursor = self.conn.cursor()
         cursor.execute("SELECT user_id, full_name, class, registered_at FROM users ORDER BY registered_at DESC")
         return cursor.fetchall()
     
     def get_schedule(self, class_name, day):
-        """Получение расписания для класса и дня"""
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT lesson_number, subject, teacher, room FROM schedule WHERE class = ? AND day = ? ORDER BY lesson_number",
@@ -249,13 +224,10 @@ def safe_message(self, text):
         return cursor.fetchall()
     
     def save_schedule(self, class_name, day, lessons):
-        """Сохранение расписания для класса и дня"""
         cursor = self.conn.cursor()
-        
         cursor.execute("DELETE FROM schedule WHERE class = ? AND day = ?", (class_name, day))
         
         for lesson_num, subject, teacher, room in lessons:
-            # Ограничение длины полей
             subject = subject[:100] if subject else ""
             teacher = teacher[:50] if teacher else ""
             room = room[:20] if room else ""
@@ -268,17 +240,14 @@ def safe_message(self, text):
         self.conn.commit()
     
     def get_bell_schedule(self):
-        """Получение расписания звонков из БД"""
         cursor = self.conn.cursor()
         cursor.execute("SELECT lesson_number, start_time, end_time FROM bell_schedule ORDER BY lesson_number")
         return cursor.fetchall()
     
     def is_admin(self, username):
-        """Проверка, является ли пользователь админом по никнейму"""
         return username and username.lower() in [admin.lower() for admin in ADMINS]
     
     def main_menu_keyboard(self):
-        """Клавиатура главного меню"""
         return {
             "keyboard": [
                 [{"text": "📚 Моё расписание"}, {"text": "🏫 Общее расписание"}],
@@ -288,7 +257,6 @@ def safe_message(self, text):
         }
     
     def admin_menu_keyboard(self):
-        """Клавиатура админ-панели"""
         return {
             "keyboard": [
                 [{"text": "👥 Список пользователей"}, {"text": "❌ Удалить пользователя"}],
@@ -300,7 +268,6 @@ def safe_message(self, text):
         }
     
     def classes_management_keyboard(self):
-        """Клавиатура управления классами"""
         return {
             "keyboard": [
                 [{"text": "➕ Добавить класс"}, {"text": "➖ Удалить класс"}],
@@ -310,7 +277,6 @@ def safe_message(self, text):
         }
     
     def bells_management_keyboard(self):
-        """Клавиатура управления звонками"""
         return {
             "keyboard": [
                 [{"text": "✏️ Изменить звонок"}, {"text": "👀 Посмотреть все звонки"}],
@@ -320,7 +286,6 @@ def safe_message(self, text):
         }
     
     def class_selection_keyboard(self):
-        """Клавиатура выбора класса"""
         classes = []
         
         for grade in range(5, 10):
@@ -342,7 +307,6 @@ def safe_message(self, text):
         return {"inline_keyboard": keyboard}
     
     def day_selection_keyboard(self):
-        """Клавиатура выбора дня недели"""
         days = [
             ("Понедельник", "monday"),
             ("Вторник", "tuesday"),
@@ -359,14 +323,12 @@ def safe_message(self, text):
         return {"inline_keyboard": keyboard}
     
     def cancel_keyboard(self):
-        """Клавиатура отмены"""
         return {
             "keyboard": [[{"text": "❌ Отменить"}]],
             "resize_keyboard": True
         }
     
     def is_valid_class(self, class_str):
-        """Проверка корректности класса"""
         class_str = class_str.strip().upper()
         
         if re.match(r'^[5-9][А-В]$', class_str):
@@ -378,9 +340,8 @@ def safe_message(self, text):
         return False
     
     def is_valid_fullname(self, name):
-        """Проверка корректности ФИО"""
         name = name.strip()
-        if len(name) > 100:  # Ограничение длины
+        if len(name) > 100:
             return False
             
         parts = name.split()
@@ -394,21 +355,17 @@ def safe_message(self, text):
         return True
     
     def is_valid_time(self, time_str):
-        """Проверка формата времени ЧЧ:ММ"""
         return bool(re.match(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$', time_str))
     
     def get_existing_classes(self):
-        """Получить список существующих классов из БД"""
         cursor = self.conn.cursor()
         cursor.execute("SELECT DISTINCT class FROM users ORDER BY class")
         return [row[0] for row in cursor.fetchall()]
     
     def add_class(self, class_name):
-        """Добавить класс (проверка дубликатов не требуется, так как классы хранятся в users)"""
         return self.is_valid_class(class_name)
     
     def delete_class(self, class_name):
-        """Удалить класс и всех его пользователей"""
         cursor = self.conn.cursor()
         cursor.execute("DELETE FROM users WHERE class = ?", (class_name,))
         deleted_count = cursor.rowcount
@@ -416,7 +373,6 @@ def safe_message(self, text):
         return deleted_count > 0
     
     def update_bell_schedule(self, lesson_number, start_time, end_time):
-        """Обновить расписание звонков"""
         cursor = self.conn.cursor()
         cursor.execute(
             "UPDATE bell_schedule SET start_time = ?, end_time = ? WHERE lesson_number = ?",
@@ -426,7 +382,6 @@ def safe_message(self, text):
         return cursor.rowcount > 0
     
     def handle_start(self, chat_id, user):
-        """Обработка команды /start"""
         user_data = self.get_user(user["id"])
         
         if user_data:
@@ -452,14 +407,13 @@ def safe_message(self, text):
         self.send_message(chat_id, text, self.main_menu_keyboard() if user_data else None)
     
     def handle_help(self, chat_id, username):
-        """Обработка команды /help"""
         text = (
             "📚 <b>Школьный бот - помощь</b>\n\n"
             "Я помогу тебе узнать расписание уроков.\n\n"
-            "Основные команды:\n"
+            "<b>Основные команды:</b>\n"
             "• /start - начать работу\n"
             "• /help - показать эту справку\n\n"
-            "Возможности:\n"
+            "<b>Возможности:</b>\n"
             "• <b>Моё расписание</b> - расписание для твоего класса\n"
             "• <b>Общее расписание</b> - расписание для любого класса\n"
             "• <b>Звонки</b> - расписание звонков\n\n"
@@ -471,7 +425,7 @@ def safe_message(self, text):
             "11 класс: Р\n\n"
             "🛠 <b>Техническая помощь</b>\n"
             "Если вы обнаружили ошибку или у вас есть предложения, "
-            f"напишите разработчику: @r1kuza"
+            "напишите разработчику: @r1kuza"
         )
         
         if self.is_admin(username):
@@ -480,7 +434,6 @@ def safe_message(self, text):
         self.send_message(chat_id, text)
     
     def handle_admin_panel(self, chat_id, username):
-        """Обработка админ-панели"""
         if not self.is_admin(username):
             self.log_security_event("unauthorized_admin_access", chat_id, f"Username: {username}")
             self.send_message(chat_id, "❌ У вас нет доступа к админ-панели")
@@ -490,17 +443,14 @@ def safe_message(self, text):
         self.send_message(chat_id, text, self.admin_menu_keyboard())
     
     def show_classes_management(self, chat_id, username):
-        """Показать меню управления классами"""
         self.admin_states[username] = {"menu": "classes_management"}
         self.send_message(chat_id, "🏫 Управление классами", self.classes_management_keyboard())
     
     def show_bells_management(self, chat_id, username):
-        """Показать меню управления звонками"""
         self.admin_states[username] = {"menu": "bells_management"}
         self.send_message(chat_id, "🕧 Управление расписанием звонков", self.bells_management_keyboard())
     
     def start_add_class(self, chat_id, username):
-        """Начать процесс добавления класса"""
         self.admin_states[username] = {"action": "add_class_input"}
         self.send_message(
             chat_id,
@@ -511,10 +461,8 @@ def safe_message(self, text):
         )
     
     def start_delete_class(self, chat_id, username):
-        """Начать процесс удаления класса"""
         self.admin_states[username] = {"action": "delete_class_input"}
         
-        # Показываем существующие классы
         classes = self.get_existing_classes()
         classes_text = "Существующие классы:\n" + "\n".join(classes) if classes else "❌ Нет зарегистрированных классов"
         
@@ -525,7 +473,6 @@ def safe_message(self, text):
         )
     
     def start_edit_bell(self, chat_id, username):
-        """Начать процесс изменения звонка"""
         self.admin_states[username] = {"action": "edit_bell_number"}
         self.send_message(
             chat_id,
@@ -534,7 +481,6 @@ def safe_message(self, text):
         )
     
     def show_all_bells(self, chat_id):
-        """Показать все звонки"""
         bells = self.get_bell_schedule()
         bells_text = "🔔 <b>Текущее расписание звонков</b>\n\n"
         for bell in bells:
@@ -542,7 +488,6 @@ def safe_message(self, text):
         self.send_message(chat_id, bells_text)
     
     def handle_management_menus(self, chat_id, username, text):
-        """Обработка меню управления классами и звонками"""
         if text == "➕ Добавить класс":
             self.start_add_class(chat_id, username)
         elif text == "➖ Удалить класс":
@@ -555,7 +500,6 @@ def safe_message(self, text):
             self.handle_admin_panel(chat_id, username)
     
     def handle_class_input(self, chat_id, username, text):
-        """Обработка ввода названия класса"""
         if username not in self.admin_states:
             return
         
@@ -581,7 +525,6 @@ def safe_message(self, text):
         del self.admin_states[username]
     
     def handle_bell_input(self, chat_id, username, text):
-        """Обработка ввода данных для изменения звонка"""
         if username not in self.admin_states:
             return
         
@@ -627,7 +570,6 @@ def safe_message(self, text):
                 del self.admin_states[username]
     
     def handle_main_menu(self, chat_id, user_id, text, username):
-        """Обработка главного меню"""
         user_data = self.get_user(user_id)
         if not user_data:
             self.send_message(
@@ -667,7 +609,6 @@ def safe_message(self, text):
             self.handle_help(chat_id, username)
     
     def handle_admin_menu(self, chat_id, username, text):
-        """Обработка меню админ-панели"""
         if not self.is_admin(username):
             self.log_security_event("unauthorized_admin_action", chat_id, f"Action: {text}")
             self.send_message(chat_id, "❌ У вас нет доступа к этой функции")
@@ -687,30 +628,26 @@ def safe_message(self, text):
             self.show_statistics(chat_id)
         elif text == "⬅️ Назад":
             self.send_message(chat_id, "Главное меню", self.main_menu_keyboard())
-        # Обработка новых кнопок подменю
         elif text in ["➕ Добавить класс", "➖ Удалить класс", "⬅️ Назад в админку", 
                       "✏️ Изменить звонок", "👀 Посмотреть все звонки"]:
             self.handle_management_menus(chat_id, username, text)
     
-def show_users_list(self, chat_id):
-    """Показать список пользователей"""
-    users = self.get_all_users()
-    
-    if not users:
-        self.send_message(chat_id, "❌ Нет зарегистрированных пользователей")
-        return
-    
-    # ✅ Правильное HTML-форматирование
-    users_text = "👥 <b>Список пользователей</b>\n\n"
-    for user in users:
-        reg_date = user[3].split()[0] if user[3] else "неизвестно"
-        users_text += f"👤 {self.safe_message(user[1])} - {self.safe_message(user[2])} (ID: {user[0]})\n"
-        users_text += f"   📅 Зарегистрирован: {reg_date}\n\n"
-    
-    self.send_message(chat_id, users_text)
+    def show_users_list(self, chat_id):
+        users = self.get_all_users()
+        
+        if not users:
+            self.send_message(chat_id, "❌ Нет зарегистрированных пользователей")
+            return
+        
+        users_text = "👥 <b>Список пользователей</b>\n\n"
+        for user in users:
+            reg_date = user[3].split()[0] if user[3] else "неизвестно"
+            users_text += f"👤 {self.safe_message(user[1])} - {self.safe_message(user[2])} (ID: {user[0]})\n"
+            users_text += f"   📅 Зарегистрирован: {reg_date}\n\n"
+        
+        self.send_message(chat_id, users_text)
     
     def start_delete_user(self, chat_id, username):
-        """Начать процесс удаления пользователя"""
         self.admin_states[username] = {"action": "delete_user"}
         self.send_message(
             chat_id,
@@ -720,7 +657,6 @@ def show_users_list(self, chat_id):
         )
     
     def delete_user_by_id(self, chat_id, admin_username, user_id_str):
-        """Удалить пользователя по ID"""
         try:
             user_id = int(user_id_str)
             if not self.is_valid_user_id(user_id):
@@ -739,7 +675,6 @@ def show_users_list(self, chat_id):
             del self.admin_states[admin_username]
     
     def start_edit_schedule(self, chat_id, username):
-        """Начать процесс редактирования расписания"""
         self.admin_states[username] = {"action": "edit_schedule_class"}
         self.send_message(
             chat_id,
@@ -748,7 +683,6 @@ def show_users_list(self, chat_id):
         )
     
     def handle_schedule_class_selection(self, chat_id, username, class_name):
-        """Обработка выбора класса для редактирования расписания"""
         if username not in self.admin_states:
             return
         
@@ -764,7 +698,6 @@ def show_users_list(self, chat_id):
         )
     
     def handle_schedule_day_selection(self, chat_id, username, day_code):
-        """Обработка выбора дня для редактирования расписания"""
         if username not in self.admin_states:
             return
         
@@ -817,7 +750,6 @@ def show_users_list(self, chat_id):
         )
     
     def handle_schedule_input(self, chat_id, username, text):
-        """Обработка ввода нового расписания"""
         if username not in self.admin_states:
             return
         
@@ -877,33 +809,29 @@ def show_users_list(self, chat_id):
         if username in self.admin_states:
             del self.admin_states[username]
     
-def show_statistics(self, chat_id):
-    """Показать статистику"""
-    users = self.get_all_users()
-    total_users = len(users)
-    
-    classes = {}
-    for user in users:
-        class_name = user[2]
-        if class_name in classes:
-            classes[class_name] += 1
-        else:
-            classes[class_name] = 1
-    
-    # ✅ Правильное форматирование HTML
-    stats_text = "📊 <b>Статистика бота</b>\n\n"
-    stats_text += f"👥 Всего пользователей: {total_users}\n\n"
-    
-    if classes:
-        stats_text += "<b>Распределение по классам:</b>\n"
-        for class_name, count in sorted(classes.items()):
-            stats_text += f"• {self.safe_message(class_name)}: {count} чел.\n"
-    
-    # ✅ Отправляем с правильным parse_mode
-    self.send_message(chat_id, stats_text)
+    def show_statistics(self, chat_id):
+        users = self.get_all_users()
+        total_users = len(users)
+        
+        classes = {}
+        for user in users:
+            class_name = user[2]
+            if class_name in classes:
+                classes[class_name] += 1
+            else:
+                classes[class_name] = 1
+        
+        stats_text = "📊 <b>Статистика бота</b>\n\n"
+        stats_text += f"👥 Всего пользователей: {total_users}\n\n"
+        
+        if classes:
+            stats_text += "<b>Распределение по классам:</b>\n"
+            for class_name, count in sorted(classes.items()):
+                stats_text += f"• {self.safe_message(class_name)}: {count} чел.\n"
+        
+        self.send_message(chat_id, stats_text)
     
     def handle_registration(self, chat_id, user_id, text):
-        """Обработка регистрации"""
         if self.get_user(user_id):
             self.send_message(chat_id, "Вы уже зарегистрированы!", self.main_menu_keyboard())
             return
@@ -960,7 +888,6 @@ def show_statistics(self, chat_id):
             )
     
     def process_update(self, update):
-        """Обработка одного обновления"""
         update_id = update.get("update_id")
         
         if update_id in self.processed_updates:
@@ -980,7 +907,6 @@ def show_statistics(self, chat_id):
                 user_id = user.get("id")
                 username = user.get("username", "")
                 
-                # Проверка rate limiting
                 if user_id and self.rate_limiter.is_limited(user_id):
                     self.log_security_event("rate_limit_exceeded", user_id, f"Username: {username}")
                     self.send_message(chat_id, "⚠️ Слишком много запросов. Пожалуйста, подождите.")
@@ -995,7 +921,6 @@ def show_statistics(self, chat_id):
                         if text == "❌ Отменить":
                             if username in self.admin_states:
                                 del self.admin_states[username]
-                            # Возвращаем в соответствующее меню
                             if state.get("menu") == "classes_management":
                                 self.send_message(chat_id, "Действие отменено", self.classes_management_keyboard())
                             elif state.get("menu") == "bells_management":
@@ -1004,12 +929,10 @@ def show_statistics(self, chat_id):
                                 self.send_message(chat_id, "Действие отменено", self.admin_menu_keyboard())
                             return
                         
-                        # Обработка ввода для управления классами
                         if state.get("action") in ["add_class_input", "delete_class_input"]:
                             self.handle_class_input(chat_id, username, text)
                             return
                         
-                        # Обработка ввода для управления звонками
                         if state.get("action") in ["edit_bell_number", "edit_bell_start", "edit_bell_end"]:
                             self.handle_bell_input(chat_id, username, text)
                             return
@@ -1044,7 +967,6 @@ def show_statistics(self, chat_id):
                 user = callback_query["from"]
                 username = user.get("username", "")
                 
-                # Проверка rate limiting для callback
                 if user.get("id") and self.rate_limiter.is_limited(user["id"]):
                     self.log_security_event("rate_limit_exceeded", user["id"], f"Callback from: {username}")
                     return
@@ -1112,7 +1034,6 @@ def show_statistics(self, chat_id):
             logger.error(f"Ошибка в process_update: {e}")
     
     def answer_callback_query(self, callback_query_id):
-        """Ответ на callback query"""
         url = f"{BASE_URL}/answerCallbackQuery"
         data = {"callback_query_id": callback_query_id}
         try:
@@ -1121,10 +1042,8 @@ def show_statistics(self, chat_id):
             logger.error(f"Ошибка ответа на callback: {e}")
     
     def run(self):
-        """Запуск бота"""
-        logger.info("Бот запущен - версия с улучшенной безопасностью")
+        logger.info("Бот запущен")
         
-        # Очищаем вебхук, чтобы использовать long polling
         try:
             delete_url = f"{BASE_URL}/deleteWebhook"
             response = requests.get(delete_url, timeout=10)
