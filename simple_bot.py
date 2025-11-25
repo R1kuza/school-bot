@@ -57,6 +57,7 @@ class SimpleSchoolBot:
     def __init__(self):
         self.last_update_id = 0
         self.admin_states = {}
+        self.user_states = {}
         self.processed_updates = set()
         self.rate_limiter = RateLimiter()
         self.init_db()
@@ -108,7 +109,7 @@ class SimpleSchoolBot:
                 (7, '13:00', '13:40')
             ]
             cursor.executemany(
-                "INSERT INTO bell_schedule (lesson_number, start_time, end_time) VALUES (?, ?, ?)",
+                "INSERT OR REPLACE INTO bell_schedule (lesson_number, start_time, end_time) VALUES (?, ?, ?)",
                 bell_schedule
             )
         
@@ -118,11 +119,8 @@ class SimpleSchoolBot:
         if not text:
             return ""
         text = str(text)
-        text = text.replace('<b>', '___BOLD_OPEN___')
-        text = text.replace('</b>', '___BOLD_CLOSE___')
+        text = re.sub(r'<[^>]+>', '', text)
         text = escape(text)
-        text = text.replace('___BOLD_OPEN___', '<b>')
-        text = text.replace('___BOLD_CLOSE___', '</b>')
         return text
     
     def truncate_message(self, text, max_length=MAX_MESSAGE_LENGTH):
@@ -273,7 +271,7 @@ class SimpleSchoolBot:
             room = room[:20] if room else ""
             
             cursor.execute(
-                "INSERT INTO schedule (class, day, lesson_number, subject, teacher, room) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO schedule (class, day, lesson_number, subject, teacher, room) VALUES (?, ?, ?, ?, ?, ?)",
                 (class_name, day, lesson_num, subject, teacher, room)
             )
         
@@ -296,33 +294,48 @@ class SimpleSchoolBot:
             "resize_keyboard": True
         }
     
-    def admin_menu_keyboard(self):
+    def admin_menu_inline_keyboard(self):
         return {
-            "keyboard": [
-                [{"text": "👥 Список пользователей"}, {"text": "❌ Удалить пользователя"}],
-                [{"text": "📝 Редактировать расписание"}, {"text": "🏫 Управление классами"}],
-                [{"text": "🕧 Управление звонками"}, {"text": "📤 Загрузить Excel"}],
-                [{"text": "📊 Статистика"}, {"text": "⬅️ Назад"}]
-            ],
-            "resize_keyboard": True
+            "inline_keyboard": [
+                [{"text": "👥 Список пользователей", "callback_data": "admin_users"}],
+                [{"text": "❌ Удалить пользователя", "callback_data": "admin_delete_user"}],
+                [{"text": "📝 Редактировать расписание", "callback_data": "admin_edit_schedule"}],
+                [{"text": "🏫 Управление классами", "callback_data": "admin_manage_classes"}],
+                [{"text": "🕧 Управление звонками", "callback_data": "admin_bells"}],
+                [{"text": "📤 Загрузить Excel", "callback_data": "admin_upload_excel"}],
+                [{"text": "📊 Статистика", "callback_data": "admin_stats"}],
+                [{"text": "⬅️ Назад", "callback_data": "admin_back"}]
+            ]
         }
     
-    def classes_management_keyboard(self):
+    def classes_management_inline_keyboard(self):
         return {
-            "keyboard": [
-                [{"text": "➕ Добавить класс"}, {"text": "➖ Удалить класс"}],
-                [{"text": "⬅️ Назад в админку"}]
-            ],
-            "resize_keyboard": True
+            "inline_keyboard": [
+                [{"text": "➕ Добавить класс", "callback_data": "admin_add_class"}],
+                [{"text": "➖ Удалить класс", "callback_data": "admin_delete_class"}],
+                [{"text": "⬅️ Назад в админку", "callback_data": "admin_back"}]
+            ]
         }
     
-    def bells_management_keyboard(self):
+    def bells_management_inline_keyboard(self):
         return {
-            "keyboard": [
-                [{"text": "✏️ Изменить звонок"}, {"text": "👀 Посмотреть все звонки"}],
-                [{"text": "⬅️ Назад в админку"}]
-            ],
-            "resize_keyboard": True
+            "inline_keyboard": [
+                [{"text": "✏️ Изменить звонок", "callback_data": "admin_edit_bell"}],
+                [{"text": "👀 Посмотреть все звонки", "callback_data": "admin_view_bells"}],
+                [{"text": "⬅️ Назад в админку", "callback_data": "admin_back"}]
+            ]
+        }
+    
+    def day_selection_inline_keyboard(self):
+        return {
+            "inline_keyboard": [
+                [{"text": "Понедельник", "callback_data": "day_monday"}],
+                [{"text": "Вторник", "callback_data": "day_tuesday"}],
+                [{"text": "Среда", "callback_data": "day_wednesday"}],
+                [{"text": "Четверг", "callback_data": "day_thursday"}],
+                [{"text": "Пятница", "callback_data": "day_friday"}],
+                [{"text": "Суббота", "callback_data": "day_saturday"}]
+            ]
         }
     
     def class_selection_keyboard(self):
@@ -337,34 +350,25 @@ class SimpleSchoolBot:
         keyboard = []
         row = []
         for i, cls in enumerate(classes):
-            row.append({"text": cls, "callback_data": f"class_{cls}"})
+            row.append({"text": cls})
             if (i + 1) % 3 == 0:
                 keyboard.append(row)
                 row = []
         if row:
             keyboard.append(row)
         
-        return {"inline_keyboard": keyboard}
+        keyboard.append([{"text": "⬅️ Назад"}])
+        
+        return {"keyboard": keyboard, "resize_keyboard": True}
     
-    def day_selection_keyboard(self, class_name=None):
-        days = [
-            ("Понедельник", "monday"),
-            ("Вторник", "tuesday"),
-            ("Среда", "wednesday"),
-            ("Четверг", "thursday"),
-            ("Пятница", "friday"),
-            ("Суббота", "saturday")
-        ]
-        
-        keyboard = []
-        for day_name, day_code in days:
-            if class_name:
-                callback_data = f"schedule_{class_name}_{day_code}"
-            else:
-                callback_data = f"day_{day_code}"
-            keyboard.append([{"text": day_name, "callback_data": callback_data}])
-        
-        return {"inline_keyboard": keyboard}
+    def shift_selection_keyboard(self):
+        return {
+            "keyboard": [
+                [{"text": "1 смена"}, {"text": "2 смена"}],
+                [{"text": "❌ Отменить"}]
+            ],
+            "resize_keyboard": True
+        }
     
     def cancel_keyboard(self):
         return {
@@ -425,132 +429,358 @@ class SimpleSchoolBot:
         self.conn.commit()
         return cursor.rowcount > 0
 
-    def parse_excel_schedule(self, file_content):
-        """Парсинг Excel файла с расписанием"""
+    def parse_excel_schedule(self, file_content, shift):
         try:
-            # Читаем оба листа
-            df_first_shift = pd.read_excel(io.BytesIO(file_content), sheet_name='1 СМЕНА', header=None)
-            df_second_shift = pd.read_excel(io.BytesIO(file_content), sheet_name='2 СМЕНА', header=None)
+            import pandas as pd
             
             lessons_data = []
             
-            # Парсим первую смену
-            self._parse_shift_schedule(df_first_shift, '1', lessons_data)
+            logger.info(f"=== НАЧАЛО ПАРСИНГА ДЛЯ СМЕНЫ {shift} ===")
+            logger.info("Используется метод парсинга: method3 (структурный)")
             
-            # Парсим вторую смену
-            self._parse_shift_schedule(df_second_shift, '2', lessons_data)
+            try:
+                excel_file = pd.ExcelFile(io.BytesIO(file_content))
+                sheet_names = excel_file.sheet_names
+                logger.info(f"Доступные листы в файе: {sheet_names}")
+                
+                selected_sheet = self._select_sheet(sheet_names, shift)
+                if not selected_sheet:
+                    logger.error("Не удалось найти подходящий лист!")
+                    return None
+                
+                logger.info(f"Выбран лист: '{selected_sheet}'")
+                
+                df = pd.read_excel(io.BytesIO(file_content), sheet_name=selected_sheet, header=None)
+                logger.info(f"Размер таблицы: {df.shape} (строк: {df.shape[0]}, колонок: {df.shape[1]})")
+                
+                self._log_file_structure(df, selected_sheet)
+                
+                success = self._parse_method3(df, shift, lessons_data, selected_sheet)
+                
+                if not success:
+                    logger.error("Метод парсинга не дал результатов")
+                    return None
+                
+            except Exception as e:
+                logger.error(f"Ошибка чтения Excel файла для смены {shift}: {e}")
+                import traceback
+                logger.error(f"Трассировка: {traceback.format_exc()}")
+                return None
             
-            return lessons_data
+            logger.info(f"=== ЗАВЕРШЕНИЕ ПАРСИНГА ДЛЯ СМЕНЫ {shift} ===")
+            logger.info(f"Найдено уроков: {len(lessons_data)}")
+            
+            if lessons_data:
+                class_stats = {}
+                for lesson in lessons_data:
+                    class_name = lesson['class']
+                    class_stats[class_name] = class_stats.get(class_name, 0) + 1
+                
+                logger.info(f"Статистика по классам: {class_stats}")
+            
+            return lessons_data if lessons_data else None
+            
         except Exception as e:
-            logger.error(f"Ошибка парсинга Excel: {e}")
+            logger.error(f"Общая ошибка парсинга Excel для смены {shift}: {e}")
+            import traceback
+            logger.error(f"Трассировка: {traceback.format_exc()}")
             return None
 
-    def _parse_shift_schedule(self, df, shift, lessons_data):
-        """Парсинг расписания для одной смены"""
-        # Находим строку с заголовками классов
-        header_row = None
-        for i in range(len(df)):
-            row = df.iloc[i]
-            if row.isna().all():
-                continue
-            for cell in row:
-                if isinstance(cell, str) and '5а' in cell.lower():
-                    header_row = i
-                    break
-            if header_row is not None:
-                break
+    def _select_sheet(self, sheet_names, shift):
+        possible_sheet_names = [
+            f"{shift} СМЕНА",
+            f"{shift} смена", 
+            f"Смена {shift}",
+            f"СМЕНА {shift}",
+            f"1 СМЕНА",
+            "1 СМЕНА"
+        ]
         
-        if header_row is None:
-            return
+        for sheet_name in possible_sheet_names:
+            if sheet_name in sheet_names:
+                return sheet_name
         
-        # Собираем информацию о колонках для каждого класса
-        class_columns = {}
-        header_cells = df.iloc[header_row]
+        for sheet_name in sheet_names:
+            if any(name.lower() in sheet_name.lower() for name in possible_sheet_names):
+                return sheet_name
         
-        current_class = None
-        for col_idx, cell in enumerate(header_cells):
-            if pd.isna(cell):
-                continue
-                
-            cell_str = str(cell).strip()
-            
-            # Определяем класс
-            if any(class_pattern in cell_str for class_pattern in ['5а', '5б', '5в', '6а', '6б', '6в', '6г', 
-                                                                  '7а', '7б', '7в', '8а', '8б', '8в', 
-                                                                  '9а', '9б', '9р', '10п', '10р', '11р']):
-                current_class = cell_str
-                class_columns[current_class] = {'subject_col': col_idx, 'room_col': col_idx + 1}
-            elif cell_str.lower() == 'каб' and current_class:
-                class_columns[current_class]['room_col'] = col_idx
+        if sheet_names:
+            logger.warning(f"Лист для смены {shift} не найден, используем первый лист: {sheet_names[0]}")
+            return sheet_names[0]
         
-        # Парсим расписание по дням
-        current_day = None
-        for i in range(header_row + 1, len(df)):
-            row = df.iloc[i]
-            
-            # Проверяем, является ли строка днем недели
-            day_cell = row[0] if len(row) > 0 else None
-            if not pd.isna(day_cell) and isinstance(day_cell, str):
-                day_name = day_cell.strip().lower()
-                if any(day in day_name for day in ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота']):
-                    current_day = day_name
-                    continue
-            
-            if current_day and not pd.isna(row[1]) and str(row[1]).strip().isdigit():
-                lesson_num = int(str(row[1]).strip())
-                
-                for class_name, cols in class_columns.items():
-                    subject_col = cols.get('subject_col')
-                    room_col = cols.get('room_col')
-                    
-                    if subject_col and len(row) > subject_col and not pd.isna(row[subject_col]):
-                        subject = str(row[subject_col]).strip()
-                        room = str(row[room_col]).strip() if room_col and len(row) > room_col and not pd.isna(row[room_col]) else ""
-                        
-                        if subject and subject not in ['', 'nan', 'None']:
-                            # Нормализуем названия дней
-                            day_map = {
-                                'понедельник': 'monday',
-                                'вторник': 'tuesday',
-                                'среда': 'wednesday',
-                                'четверг': 'thursday',
-                                'пятница': 'friday',
-                                'суббота': 'saturday'
-                            }
-                            
-                            day_code = day_map.get(current_day, current_day)
-                            lessons_data.append({
-                                'class': class_name,
-                                'day': day_code,
-                                'lesson_number': lesson_num,
-                                'subject': subject,
-                                'room': room
-                            })
+        return None
 
-    def import_schedule_from_excel(self, file_content):
-        """Импорт расписания из Excel в базу данных"""
+    def _log_file_structure(self, df, sheet_name):
+        logger.info(f"=== СТРУКТУРА ФАЙЛА '{sheet_name}' ===")
+        
+        logger.info("Первые 15 строк файла:")
+        for i in range(min(15, len(df))):
+            row_preview = []
+            for j in range(min(20, len(df.columns))):
+                cell_value = df.iloc[i, j]
+                if pd.isna(cell_value):
+                    row_preview.append("")
+                else:
+                    row_preview.append(str(cell_value).strip())
+            logger.info(f"Строка {i:2d}: {row_preview}")
+        
+        non_empty_cells = 0
+        for i in range(min(20, len(df))):
+            for j in range(min(20, len(df.columns))):
+                if pd.notna(df.iloc[i, j]) and str(df.iloc[i, j]).strip():
+                    non_empty_cells += 1
+        
+        logger.info(f"Непустых ячеек в первых 20x20: {non_empty_cells}")
+
+    def _parse_method3(self, df, shift, lessons_data, sheet_name):
         try:
-            lessons_data = self.parse_excel_schedule(file_content)
+            logger.info("=== МЕТОД 3: СТРУКТУРНЫЙ ПАРСИНГ ===")
+            
+            class_row_idx = self._find_class_header_row(df)
+            if class_row_idx is None:
+                logger.error("Не удалось найти строку с заголовками классов")
+                return False
+            
+            logger.info(f"Найдена строка с классами: строка {class_row_idx}")
+            
+            class_columns = self._extract_class_columns(df, class_row_idx)
+            if not class_columns:
+                logger.error("Не удалось определить классы и их колонки")
+                return False
+            
+            logger.info(f"Найдены классы и колонки: {class_columns}")
+            
+            day_rows = self._find_day_rows(df)
+            if not day_rows:
+                logger.error("Не удалось найти дни недели")
+                return False
+            
+            logger.info(f"Найдены дни недели: {day_rows}")
+            
+            for day_name, day_row_idx in day_rows:
+                logger.info(f"Обрабатываем день: {day_name} (строка {day_row_idx})")
+                
+                next_day_idx = None
+                for next_day, next_idx in day_rows:
+                    if next_idx > day_row_idx:
+                        next_day_idx = next_idx
+                        break
+                
+                end_row = next_day_idx if next_day_idx else len(df)
+                
+                day_lessons = self._parse_day_schedule(df, day_row_idx + 1, end_row, class_columns, shift, day_name)
+                lessons_data.extend(day_lessons)
+                logger.info(f"Для дня {day_name} найдено {len(day_lessons)} уроков")
+            
+            logger.info(f"Метод 3: успешно распаршено {len(lessons_data)} уроков")
+            return len(lessons_data) > 0
+            
+        except Exception as e:
+            logger.error(f"Ошибка в методе 3: {e}")
+            import traceback
+            logger.error(f"Трассировка: {traceback.format_exc()}")
+            return False
+
+    def _find_class_header_row(self, df):
+        for i in range(min(15, len(df))):
+            row = df.iloc[i]
+            class_count = 0
+            for cell in row:
+                if pd.notna(cell) and self._is_class_header(str(cell)):
+                    class_count += 1
+            if class_count >= 2:
+                return i
+        return None
+
+    def _extract_class_columns(self, df, class_row_idx):
+        class_columns = {}
+        class_row = df.iloc[class_row_idx]
+        
+        for j, cell in enumerate(class_row):
+            if pd.notna(cell):
+                cell_str = str(cell).strip()
+                class_name = self._extract_class_name(cell_str)
+                if class_name:
+                    class_columns[class_name] = j
+                    logger.debug(f"Найден класс {class_name} в колонке {j}")
+        
+        return class_columns
+
+    def _find_day_rows(self, df):
+        day_rows = []
+        day_patterns = {
+            'понедельник': 'monday',
+            'вторник': 'tuesday',
+            'среда': 'wednesday',
+            'четверг': 'thursday',
+            'пятница': 'friday',
+            'суббота': 'saturday'
+        }
+        
+        for i in range(len(df)):
+            for j in range(min(3, len(df.columns))):
+                if pd.notna(df.iloc[i, j]) and isinstance(df.iloc[i, j], str):
+                    cell_value = str(df.iloc[i, j]).lower().strip()
+                    for ru_day, en_day in day_patterns.items():
+                        if ru_day in cell_value:
+                            day_rows.append((en_day, i))
+                            logger.debug(f"Найден день '{en_day}' в строке {i}, колонке {j}")
+                            break
+                    else:
+                        continue
+                    break
+        
+        day_rows.sort(key=lambda x: x[1])
+        return day_rows
+
+    def _parse_day_schedule(self, df, start_row, end_row, class_columns, shift, day_name):
+        lessons = []
+        
+        # ИСПРАВЛЕНИЕ: Собираем все номера уроков из колонки с номерами
+        lesson_numbers = {}
+        for row_idx in range(start_row, min(end_row, len(df))):
+            row = df.iloc[row_idx]
+            
+            # Ищем номер урока во второй колонке (индекс 1)
+            if len(row) > 1 and pd.notna(row[1]):
+                lesson_str = str(row[1]).strip()
+                # Извлекаем число из ячейки
+                numbers = re.findall(r'\d+', lesson_str)
+                if numbers:
+                    lesson_num = int(numbers[0])
+                    if 1 <= lesson_num <= 10:
+                        lesson_numbers[row_idx] = lesson_num
+        
+        # Обрабатываем строки с уроками
+        current_lesson_num = 1
+        
+        for row_idx in range(start_row, min(end_row, len(df))):
+            row = df.iloc[row_idx]
+            
+            if all(pd.isna(cell) for cell in row):
+                continue
+            
+            # Определяем номер урока
+            lesson_num = lesson_numbers.get(row_idx)
+            if lesson_num is not None:
+                current_lesson_num = lesson_num
+            else:
+                # Если номер не найден, используем текущий
+                lesson_num = current_lesson_num
+            
+            lesson_found_in_row = False
+            
+            for class_name, col_idx in class_columns.items():
+                if col_idx < len(row) and pd.notna(row[col_idx]):
+                    subject = str(row[col_idx]).strip()
+                    
+                    if not subject or subject in ['-', '—', ''] or self._is_day_of_week(subject):
+                        continue
+                    
+                    room = ""
+                    if col_idx + 1 < len(row) and pd.notna(row[col_idx + 1]):
+                        room_cell = str(row[col_idx + 1]).strip()
+                        if room_cell and not self._is_day_of_week(room_cell):
+                            room = room_cell
+                    
+                    lessons.append({
+                        'class': class_name,
+                        'day': day_name,
+                        'lesson_number': lesson_num,
+                        'subject': subject,
+                        'room': room,
+                        'teacher': '',
+                        'shift': shift
+                    })
+                    
+                    lesson_found_in_row = True
+                    logger.debug(f"Добавлен урок: {class_name}, {day_name}, {lesson_num}, {subject}, {room}")
+            
+            # Увеличиваем номер урока только если в строке был найден хотя бы один урок
+            # и если мы не используем явный номер из ячейки
+            if lesson_found_in_row and row_idx not in lesson_numbers:
+                current_lesson_num += 1
+        
+        return lessons
+
+    def _is_class_header(self, text):
+        text = text.lower().strip()
+        patterns = [
+            r'^\d[абв]$',
+            r'^10[пр]$',
+            r'^11[р]$',
+            r'^\d[абв]\s*$',
+            r'^\d[абв].*класс',
+            r'^класс.*\d[абв]'
+        ]
+        return any(re.match(pattern, text) for pattern in patterns)
+
+    def _extract_class_name(self, text):
+        text = text.lower().strip()
+        
+        text = re.sub(r'(класс|смена|урок|расписание|№)', '', text).strip()
+        
+        patterns = [
+            (r'(\d[абв])', 1),
+            (r'(10[пр])', 1),
+            (r'(11[р])', 1)
+        ]
+        
+        for pattern, group in patterns:
+            match = re.search(pattern, text)
+            if match:
+                class_name = match.group(group).upper()
+                return class_name
+        
+        return None
+
+    def _is_day_of_week(self, text):
+        text = text.lower().strip()
+        days = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота']
+        return any(day in text for day in days)
+
+    def import_schedule_from_excel(self, file_content, shift):
+        try:
+            lessons_data = self.parse_excel_schedule(file_content, shift)
             if not lessons_data:
-                return False, "Не удалось распарсить Excel файл"
+                return False, f"Не удалось распарсить Excel файл для {shift} смены"
             
-            # Очищаем существующее расписание
             cursor = self.conn.cursor()
-            cursor.execute("DELETE FROM schedule")
+            imported_count = 0
+            error_count = 0
             
-            # Добавляем новые данные
+            imported_classes = set(lesson['class'] for lesson in lessons_data)
+            
+            for class_name in imported_classes:
+                cursor.execute("DELETE FROM schedule WHERE class = ?", (class_name,))
+                logger.info(f"Удалены старые уроки для класса {class_name}")
+            
             for lesson in lessons_data:
-                cursor.execute(
-                    "INSERT INTO schedule (class, day, lesson_number, subject, teacher, room) VALUES (?, ?, ?, ?, ?, ?)",
-                    (lesson['class'], lesson['day'], lesson['lesson_number'], lesson['subject'], '', lesson['room'])
-                )
+                try:
+                    lesson_number = int(lesson['lesson_number'])
+                    class_name = lesson['class']
+                    day = lesson['day']
+                    
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO schedule (class, day, lesson_number, subject, teacher, room) VALUES (?, ?, ?, ?, ?, ?)",
+                        (class_name, day, lesson_number, lesson['subject'], lesson['teacher'], lesson['room'])
+                    )
+                    imported_count += 1
+                except Exception as e:
+                    logger.error(f"Ошибка импорта урока {lesson}: {e}")
+                    error_count += 1
             
             self.conn.commit()
-            return True, f"Успешно импортировано {len(lessons_data)} уроков"
+            
+            message = f"✅ Успешно импортировано {imported_count} уроков для {shift} смены\nМетод: method3 (структурный)"
+            if error_count > 0:
+                message += f", ошибок: {error_count}"
+                
+            return True, message
         except Exception as e:
-            logger.error(f"Ошибка импорта из Excel: {e}")
-            return False, f"Ошибка импорта: {str(e)}"
-    
+            logger.error(f"Ошибка импорта из Excel для смены {shift}: {e}")
+            return False, f"Ошибка импорта для {shift} смены: {str(e)}"
+
     def handle_start(self, chat_id, user):
         user_data = self.get_user(user["id"])
         
@@ -610,15 +840,15 @@ class SimpleSchoolBot:
             return
         
         text = "👨‍💼 <b>Панель администратора</b>\n\nВыберите действие:"
-        self.send_message(chat_id, text, self.admin_menu_keyboard())
+        self.send_message(chat_id, text, self.admin_menu_inline_keyboard())
     
     def show_classes_management(self, chat_id, username):
-        self.admin_states[username] = {"menu": "classes_management"}
-        self.send_message(chat_id, "🏫 Управление классами", self.classes_management_keyboard())
+        text = "🏫 <b>Управление классами</b>\n\nВыберите действие:"
+        self.send_message(chat_id, text, self.classes_management_inline_keyboard())
     
     def show_bells_management(self, chat_id, username):
-        self.admin_states[username] = {"menu": "bells_management"}
-        self.send_message(chat_id, "🕧 Управление расписанием звонков", self.bells_management_keyboard())
+        text = "🕧 <b>Управление расписанием звонков</b>\n\nВыберите действие:"
+        self.send_message(chat_id, text, self.bells_management_inline_keyboard())
     
     def start_add_class(self, chat_id, username):
         self.admin_states[username] = {"action": "add_class_input"}
@@ -657,28 +887,6 @@ class SimpleSchoolBot:
             bells_text += f"{bell[0]}. {bell[1]} - {bell[2]}\n"
         self.send_message(chat_id, bells_text)
     
-    def handle_management_menus(self, chat_id, username, text):
-        if text == "➕ Добавить класс":
-            self.start_add_class(chat_id, username)
-        elif text == "➖ Удалить класс":
-            self.start_delete_class(chat_id, username)
-        elif text == "✏️ Изменить звонок":
-            self.start_edit_bell(chat_id, username)
-        elif text == "👀 Посмотреть все звонки":
-            self.show_all_bells(chat_id)
-        elif text == "⬅️ Назад в админку":
-            self.handle_admin_panel(chat_id, username)
-        elif text == "📤 Загрузить Excel":
-            self.send_message(
-                chat_id,
-                "📤 <b>Загрузка расписания из Excel</b>\n\n"
-                "Отправьте Excel файл с расписанием.\n"
-                "Файл должен иметь два листа: '1 СМЕНА' и '2 СМЕНА'.\n\n"
-                "После загрузки файла расписание будет автоматически обновлено.",
-                self.cancel_keyboard()
-            )
-            self.admin_states[username] = {"action": "waiting_excel"}
-    
     def handle_class_input(self, chat_id, username, text):
         if username not in self.admin_states:
             return
@@ -687,20 +895,20 @@ class SimpleSchoolBot:
         class_name = text.strip().upper()
         
         if not self.is_valid_class(class_name):
-            self.send_message(chat_id, "❌ Неверный формат класса", self.classes_management_keyboard())
+            self.send_message(chat_id, "❌ Неверный формат класса", self.admin_menu_inline_keyboard())
             del self.admin_states[username]
             return
         
         if action == "add_class_input":
             if self.add_class(class_name):
-                self.send_message(chat_id, f"✅ Класс {class_name} доступен для регистрации", self.classes_management_keyboard())
+                self.send_message(chat_id, f"✅ Класс {class_name} доступен для регистрации", self.admin_menu_inline_keyboard())
             else:
-                self.send_message(chat_id, f"❌ Неверный формат класса", self.classes_management_keyboard())
+                self.send_message(chat_id, f"❌ Неверный формат класса", self.admin_menu_inline_keyboard())
         elif action == "delete_class_input":
             if self.delete_class(class_name):
-                self.send_message(chat_id, f"✅ Класс {class_name} и все связанные пользователи удалены", self.classes_management_keyboard())
+                self.send_message(chat_id, f"✅ Класс {class_name} и все связанные пользователи удалены", self.admin_menu_inline_keyboard())
             else:
-                self.send_message(chat_id, f"❌ Класс {class_name} не найден или в нем нет пользователей", self.classes_management_keyboard())
+                self.send_message(chat_id, f"❌ Класс {class_name} не найден или в нем нет пользователей", self.admin_menu_inline_keyboard())
         
         del self.admin_states[username]
     
@@ -718,10 +926,10 @@ class SimpleSchoolBot:
                     state["lesson_number"] = lesson_number
                     self.send_message(chat_id, f"Урок {lesson_number}. Введите время начала (формат ЧЧ:ММ):", self.cancel_keyboard())
                 else:
-                    self.send_message(chat_id, "❌ Номер урока должен быть от 1 до 7", self.bells_management_keyboard())
+                    self.send_message(chat_id, "❌ Номер урока должен быть от 1 до 7", self.bells_management_inline_keyboard())
                     del self.admin_states[username]
             except ValueError:
-                self.send_message(chat_id, "❌ Введите число от 1 до 7", self.bells_management_keyboard())
+                self.send_message(chat_id, "❌ Введите число от 1 до 7", self.bells_management_inline_keyboard())
                 del self.admin_states[username]
         
         elif state.get("action") == "edit_bell_start":
@@ -730,7 +938,7 @@ class SimpleSchoolBot:
                 state["start_time"] = text
                 self.send_message(chat_id, f"Введите время окончания (формат ЧЧ:ММ):", self.cancel_keyboard())
             else:
-                self.send_message(chat_id, "❌ Неверный формат времени. Используйте ЧЧ:ММ", self.bells_management_keyboard())
+                self.send_message(chat_id, "❌ Неверный формат времени. Используйте ЧЧ:ММ", self.bells_management_inline_keyboard())
                 del self.admin_states[username]
         
         elif state.get("action") == "edit_bell_end":
@@ -740,37 +948,42 @@ class SimpleSchoolBot:
                 end_time = text
                 
                 if self.update_bell_schedule(lesson_number, start_time, end_time):
-                    self.send_message(chat_id, f"✅ Звонок для урока {lesson_number} обновлен: {start_time} - {end_time}", self.bells_management_keyboard())
+                    self.send_message(chat_id, f"✅ Звонок для урока {lesson_number} обновлен: {start_time} - {end_time}", self.bells_management_inline_keyboard())
                 else:
-                    self.send_message(chat_id, f"❌ Ошибка обновления звонка", self.bells_management_keyboard())
+                    self.send_message(chat_id, f"❌ Ошибка обновления звонка", self.bells_management_inline_keyboard())
                 
                 del self.admin_states[username]
             else:
-                self.send_message(chat_id, "❌ Неверный формат времени. Используйте ЧЧ:ММ", self.bells_management_keyboard())
+                self.send_message(chat_id, "❌ Неверный формат времени. Используйте ЧЧ:ММ", self.bells_management_inline_keyboard())
                 del self.admin_states[username]
     
     def handle_main_menu(self, chat_id, user_id, text, username):
         user_data = self.get_user(user_id)
-        if not user_data:
-            self.send_message(
-                chat_id,
-                "❌ Вы не зарегистрированы. Пожалуйста, введите своё ФИО и класс для регистрации."
-            )
-            return
         
         if text == "📚 Моё расписание":
+            if not user_data:
+                self.send_message(
+                    chat_id,
+                    "❌ Вы не зарегистрированы. Пожалуйста, введите своё ФИО и класс для регистрации."
+                )
+                return
+            
             class_name = user_data[2]
+            self.user_states[user_id] = {"action": "my_schedule", "class": class_name}
             self.send_message(
                 chat_id,
                 f"Выберите день недели для расписания {self.safe_message(class_name)} класса:",
-                self.day_selection_keyboard()
+                self.day_selection_inline_keyboard()
             )
+        
         elif text == "🏫 Общее расписание":
+            self.user_states[user_id] = {"action": "general_schedule"}
             self.send_message(
                 chat_id,
                 "Выберите класс:",
                 self.class_selection_keyboard()
             )
+        
         elif text == "🔔 Звонки":
             bells = self.get_bell_schedule()
             bells_text = "🔔 <b>Расписание звонков</b>\n\n"
@@ -783,10 +996,176 @@ class SimpleSchoolBot:
                 elif bell[0] < 7:
                     bells_text += "    ⏰ Перемена 10 минут\n"
             
-            bells_text += "\n📝 <i>Уроки по 40 минут</i>"
+            bells_text += "\n📝 Уроки по 40 минут"
             self.send_message(chat_id, bells_text)
+        
         elif text == "ℹ️ Помощь":
             self.handle_help(chat_id, username)
+        
+        elif text == "⬅️ Назад":
+            if user_id in self.user_states:
+                del self.user_states[user_id]
+            self.send_message(chat_id, "Главное меню", self.main_menu_keyboard())
+        
+        elif self.is_valid_class(text):
+            self.handle_class_selection(chat_id, user_id, text)
+    
+    def handle_callback_query(self, update):
+        callback_query = update.get("callback_query")
+        if not callback_query:
+            return
+            
+        chat_id = callback_query["message"]["chat"]["id"]
+        user = callback_query["from"]
+        user_id = user["id"]
+        username = user.get("username", "")
+        data = callback_query["data"]
+        
+        if data.startswith("day_"):
+            day_code = data[4:]
+            day_map = {
+                'monday': 'понедельник',
+                'tuesday': 'вторник', 
+                'wednesday': 'среда',
+                'thursday': 'четверг',
+                'friday': 'пятница',
+                'saturday': 'суббота'
+            }
+            day_text = day_map.get(day_code, day_code)
+            
+            # ИСПРАВЛЕНИЕ: Проверяем, является ли это действием администратора
+            if username in self.admin_states and self.admin_states[username].get("action") == "edit_schedule_day":
+                self.handle_schedule_day_selection(chat_id, username, day_text)
+            else:
+                self.handle_day_selection(chat_id, user_id, day_text)
+            
+        elif data.startswith("admin_"):
+            self.handle_admin_callback(chat_id, username, data)
+            
+        self.answer_callback_query(callback_query["id"])
+    
+    def handle_admin_callback(self, chat_id, username, data):
+        if not self.is_admin(username):
+            self.log_security_event("unauthorized_admin_access", chat_id, f"Username: {username}")
+            self.send_message(chat_id, "❌ У вас нет доступа к админ-панели")
+            return
+        
+        if data == "admin_users":
+            self.show_users_list(chat_id)
+        elif data == "admin_delete_user":
+            self.start_delete_user(chat_id, username)
+        elif data == "admin_edit_schedule":
+            self.start_edit_schedule(chat_id, username)
+        elif data == "admin_manage_classes":
+            self.show_classes_management(chat_id, username)
+        elif data == "admin_bells":
+            self.show_bells_management(chat_id, username)
+        elif data == "admin_upload_excel":
+            self.send_message(
+                chat_id,
+                "📤 <b>Загрузка расписания из Excel</b>\n\n"
+                "Выберите смену для загрузки:",
+                self.shift_selection_keyboard()
+            )
+            self.admin_states[username] = {"action": "select_shift"}
+        elif data == "admin_stats":
+            self.show_statistics(chat_id)
+        elif data == "admin_back":
+            if username in self.admin_states:
+                del self.admin_states[username]
+            self.send_message(chat_id, "Главное меню", self.main_menu_keyboard())
+        elif data == "admin_add_class":
+            self.start_add_class(chat_id, username)
+        elif data == "admin_delete_class":
+            self.start_delete_class(chat_id, username)
+        elif data == "admin_edit_bell":
+            self.start_edit_bell(chat_id, username)
+        elif data == "admin_view_bells":
+            self.show_all_bells(chat_id)
+    
+    def answer_callback_query(self, callback_query_id, text=None):
+        url = f"{BASE_URL}/answerCallbackQuery"
+        data = {"callback_query_id": callback_query_id}
+        if text:
+            data["text"] = text
+        
+        try:
+            response = requests.post(url, json=data, timeout=10)
+            return response.json()
+        except Exception as e:
+            logger.error(f"Ошибка ответа на callback: {e}")
+            return None
+    
+    def handle_day_selection(self, chat_id, user_id, day_text):
+        if user_id not in self.user_states:
+            self.send_message(chat_id, "❌ Ошибка: действие не найдено", self.main_menu_keyboard())
+            return
+        
+        state = self.user_states[user_id]
+        day_map = {
+            'понедельник': 'monday',
+            'вторник': 'tuesday',
+            'среда': 'wednesday',
+            'четверг': 'thursday',
+            'пятница': 'friday',
+            'суббота': 'saturday'
+        }
+        
+        day_code = day_map.get(day_text.lower())
+        if not day_code:
+            self.send_message(chat_id, "❌ Неверный день недели", self.main_menu_keyboard())
+            return
+        
+        if state.get("action") == "my_schedule":
+            class_name = state.get("class")
+            if not class_name:
+                self.send_message(chat_id, "❌ Ошибка: класс не найден", self.main_menu_keyboard())
+                return
+            
+            self.show_schedule(chat_id, class_name, day_code, day_text)
+        
+        elif state.get("action") == "general_schedule":
+            class_name = state.get("selected_class")
+            if not class_name:
+                self.send_message(chat_id, "❌ Ошибка: класс не выбран", self.main_menu_keyboard())
+                return
+            
+            self.show_schedule(chat_id, class_name, day_code, day_text)
+    
+    def handle_class_selection(self, chat_id, user_id, class_name):
+        if user_id not in self.user_states:
+            self.send_message(chat_id, "❌ Ошибка: действие не найдено", self.main_menu_keyboard())
+            return
+        
+        state = self.user_states[user_id]
+        
+        if state.get("action") == "general_schedule":
+            self.user_states[user_id] = {
+                "action": "general_schedule",
+                "selected_class": class_name
+            }
+            self.send_message(
+                chat_id,
+                f"Выбран класс: {class_name}\nТеперь выберите день недели:",
+                self.day_selection_inline_keyboard()
+            )
+    
+    def show_schedule(self, chat_id, class_name, day_code, day_name):
+        schedule = self.get_schedule(class_name, day_code)
+        
+        if schedule:
+            schedule_text = f"📅 <b>Расписание {self.safe_message(class_name)} класса</b>\n{day_name}\n\n"
+            for lesson in schedule:
+                schedule_text += f"{lesson[0]}. <b>{self.safe_message(lesson[1])}</b>"
+                if lesson[2]:
+                    schedule_text += f" ({self.safe_message(lesson[2])})"
+                if lesson[3]:
+                    schedule_text += f" - {self.safe_message(lesson[3])}"
+                schedule_text += "\n"
+        else:
+            schedule_text = f"❌ Расписание для {self.safe_message(class_name)} класса на {day_name.lower()} не найдено"
+        
+        self.send_message(chat_id, schedule_text, self.main_menu_keyboard())
     
     def handle_admin_menu(self, chat_id, username, text):
         if not self.is_admin(username):
@@ -805,14 +1184,34 @@ class SimpleSchoolBot:
         elif text == "🕧 Управление звонками":
             self.show_bells_management(chat_id, username)
         elif text == "📤 Загрузить Excel":
-            self.handle_management_menus(chat_id, username, text)
+            self.send_message(
+                chat_id,
+                "📤 <b>Загрузка расписания из Excel</b>\n\n"
+                "Выберите смену для загрузки:",
+                self.shift_selection_keyboard()
+            )
+            self.admin_states[username] = {"action": "select_shift"}
         elif text == "📊 Статистика":
             self.show_statistics(chat_id)
         elif text == "⬅️ Назад":
             self.send_message(chat_id, "Главное меню", self.main_menu_keyboard())
-        elif text in ["➕ Добавить класс", "➖ Удалить класс", "⬅️ Назад в админку", 
-                      "✏️ Изменить звонок", "👀 Посмотреть все звонки"]:
-            self.handle_management_menus(chat_id, username, text)
+        elif text in ["1 смена", "2 смена"]:
+            self.handle_shift_selection(chat_id, username, text)
+    
+    def handle_shift_selection(self, chat_id, username, shift_text):
+        if username not in self.admin_states:
+            return
+        
+        shift = "1" if shift_text == "1 смена" else "2"
+        self.admin_states[username] = {"action": "waiting_excel", "shift": shift}
+        
+        self.send_message(
+            chat_id,
+            f"📤 <b>Загрузка расписания для {shift_text}</b>\n\n"
+            f"Отправьте Excel файл с расписанием для {shift_text}.\n"
+            f"После загрузки файла расписание для {shift_text} будет автоматически обновлено.",
+            self.cancel_keyboard()
+        )
     
     def show_users_list(self, chat_id):
         users = self.get_all_users()
@@ -827,7 +1226,7 @@ class SimpleSchoolBot:
             users_text += f"👤 {self.safe_message(user[1])} - {self.safe_message(user[2])} (ID: {user[0]})\n"
             users_text += f"   📅 Зарегистрирован: {reg_date}\n\n"
         
-        self.send_message(chat_id, users_text)
+        self.send_message(chat_id, users_text, self.admin_menu_inline_keyboard())
     
     def start_delete_user(self, chat_id, username):
         self.admin_states[username] = {"action": "delete_user"}
@@ -842,16 +1241,16 @@ class SimpleSchoolBot:
         try:
             user_id = int(user_id_str)
             if not self.is_valid_user_id(user_id):
-                self.send_message(chat_id, "❌ Неверный формат ID пользователя", self.admin_menu_keyboard())
+                self.send_message(chat_id, "❌ Неверный формат ID пользователя", self.admin_menu_inline_keyboard())
                 return
                 
             if self.delete_user(user_id):
                 self.log_security_event("user_deleted", admin_username, f"Deleted user: {user_id}")
-                self.send_message(chat_id, f"✅ Пользователь с ID {user_id} удален", self.admin_menu_keyboard())
+                self.send_message(chat_id, f"✅ Пользователь с ID {user_id} удален", self.admin_menu_inline_keyboard())
             else:
-                self.send_message(chat_id, f"❌ Пользователь с ID {user_id} не найден", self.admin_menu_keyboard())
+                self.send_message(chat_id, f"❌ Пользователь с ID {user_id} не найден", self.admin_menu_inline_keyboard())
         except ValueError:
-            self.send_message(chat_id, "❌ Неверный формат ID. ID должен быть числом", self.admin_menu_keyboard())
+            self.send_message(chat_id, "❌ Неверный формат ID. ID должен быть числом", self.admin_menu_inline_keyboard())
         
         if admin_username in self.admin_states:
             del self.admin_states[admin_username]
@@ -876,28 +1275,28 @@ class SimpleSchoolBot:
         self.send_message(
             chat_id,
             f"Выбран класс: {self.safe_message(class_name)}\nТеперь выберите день недели:",
-            self.day_selection_keyboard()
+            self.day_selection_inline_keyboard()
         )
     
-    def handle_schedule_day_selection(self, chat_id, username, day_code):
+    def handle_schedule_day_selection(self, chat_id, username, day_name):
         if username not in self.admin_states:
             return
         
         class_name = self.admin_states[username].get("class")
         if not class_name:
-            self.send_message(chat_id, "❌ Ошибка: класс не выбран", self.admin_menu_keyboard())
+            self.send_message(chat_id, "❌ Ошибка: класс не выбран", self.admin_menu_inline_keyboard())
             return
         
-        day_names = {
-            "monday": "понедельник",
-            "tuesday": "вторник", 
-            "wednesday": "среду",
-            "thursday": "четверг",
-            "friday": "пятницу",
-            "saturday": "субботу"
+        day_map = {
+            "понедельник": "monday",
+            "вторник": "tuesday",
+            "среда": "wednesday",
+            "четверг": "thursday",
+            "пятница": "friday",
+            "суббота": "saturday"
         }
         
-        day_name = day_names.get(day_code, day_code)
+        day_code = day_map.get(day_name.lower(), day_name.lower())
         
         current_schedule = self.get_schedule(class_name, day_code)
         
@@ -939,12 +1338,12 @@ class SimpleSchoolBot:
         day_code = self.admin_states[username].get("day")
         
         if not class_name or not day_code:
-            self.send_message(chat_id, "❌ Ошибка: данные не найдены", self.admin_menu_keyboard())
+            self.send_message(chat_id, "❌ Ошибка: данные не найдены", self.admin_menu_inline_keyboard())
             return
         
         if text == '-':
             self.save_schedule(class_name, day_code, [])
-            self.send_message(chat_id, "✅ Расписание очищено!", self.admin_menu_keyboard())
+            self.send_message(chat_id, "✅ Расписание очищено!", self.admin_menu_inline_keyboard())
         else:
             lessons = []
             lines = text.split('\n')
@@ -986,7 +1385,7 @@ class SimpleSchoolBot:
                     continue
             
             self.save_schedule(class_name, day_code, lessons)
-            self.send_message(chat_id, f"✅ Расписание для {self.safe_message(class_name)} класса обновлено!", self.admin_menu_keyboard())
+            self.send_message(chat_id, f"✅ Расписание для {self.safe_message(class_name)} класса обновлено!", self.admin_menu_inline_keyboard())
         
         if username in self.admin_states:
             del self.admin_states[username]
@@ -1011,7 +1410,7 @@ class SimpleSchoolBot:
             for class_name, count in sorted(classes.items()):
                 stats_text += f"• {self.safe_message(class_name)}: {count} чел.\n"
         
-        self.send_message(chat_id, stats_text)
+        self.send_message(chat_id, stats_text, self.admin_menu_inline_keyboard())
     
     def handle_registration(self, chat_id, user_id, text):
         if self.get_user(user_id):
@@ -1082,6 +1481,10 @@ class SimpleSchoolBot:
             self.processed_updates = set(list(self.processed_updates)[-500:])
         
         try:
+            if "callback_query" in update:
+                self.handle_callback_query(update)
+                return
+            
             if "message" in update:
                 message = update["message"]
                 chat_id = message["chat"]["id"]
@@ -1094,39 +1497,36 @@ class SimpleSchoolBot:
                     self.send_message(chat_id, "⚠️ Слишком много запросов. Пожалуйста, подождите.")
                     return
                 
-                # Обработка документов (Excel файлов)
                 if "document" in message and username in self.admin_states and self.admin_states[username].get("action") == "waiting_excel":
                     document = message["document"]
                     file_id = document["file_id"]
                     file_name = document.get("file_name", "")
+                    shift = self.admin_states[username].get("shift", "1")
                     
                     if not file_name.lower().endswith(('.xlsx', '.xls')):
                         self.send_message(chat_id, "❌ Пожалуйста, отправьте файл в формате Excel (.xlsx или .xls)")
                         return
                     
-                    self.send_message(chat_id, "📥 Начинаю загрузку файла...")
+                    self.send_message(chat_id, f"📥 Начинаю загрузку файла для {shift} смены...")
                     
-                    # Получаем информацию о файле
                     file_info = self.get_file(file_id)
                     if not file_info:
                         self.send_message(chat_id, "❌ Ошибка получения информации о файле")
                         return
                     
-                    # Скачиваем файл
                     file_content = self.download_file(file_info["file_path"])
                     if not file_content:
                         self.send_message(chat_id, "❌ Ошибка загрузки файла")
                         return
                     
-                    self.send_message(chat_id, "🔍 Обрабатываю расписание...")
+                    self.send_message(chat_id, f"🔍 Обрабатываю расписание для {shift} смены...")
                     
-                    # Импортируем расписание
-                    success, message = self.import_schedule_from_excel(file_content)
+                    success, message = self.import_schedule_from_excel(file_content, shift)
                     
                     if success:
-                        self.send_message(chat_id, f"✅ {message}", self.admin_menu_keyboard())
+                        self.send_message(chat_id, f"✅ {message}", self.admin_menu_inline_keyboard())
                     else:
-                        self.send_message(chat_id, f"❌ {message}", self.admin_menu_keyboard())
+                        self.send_message(chat_id, f"❌ {message}", self.admin_menu_inline_keyboard())
                     
                     if username in self.admin_states:
                         del self.admin_states[username]
@@ -1135,19 +1535,16 @@ class SimpleSchoolBot:
                 if "text" in message:
                     text = message["text"]
                     
+                    if text == "❌ Отменить":
+                        if username in self.admin_states:
+                            del self.admin_states[username]
+                        if user_id in self.user_states:
+                            del self.user_states[user_id]
+                        self.send_message(chat_id, "Действие отменено", self.main_menu_keyboard())
+                        return
+                    
                     if username in self.admin_states:
                         state = self.admin_states[username]
-                        
-                        if text == "❌ Отменить":
-                            if username in self.admin_states:
-                                del self.admin_states[username]
-                            if state.get("menu") == "classes_management":
-                                self.send_message(chat_id, "Действие отменено", self.classes_management_keyboard())
-                            elif state.get("menu") == "bells_management":
-                                self.send_message(chat_id, "Действие отменено", self.bells_management_keyboard())
-                            else:
-                                self.send_message(chat_id, "Действие отменено", self.admin_menu_keyboard())
-                            return
                         
                         if state.get("action") in ["add_class_input", "delete_class_input"]:
                             self.handle_class_input(chat_id, username, text)
@@ -1163,6 +1560,15 @@ class SimpleSchoolBot:
                         elif state.get("action") == "edit_schedule_input":
                             self.handle_schedule_input(chat_id, username, text)
                             return
+                        elif state.get("action") == "edit_schedule_class":
+                            self.handle_schedule_class_selection(chat_id, username, text)
+                            return
+                        elif state.get("action") == "edit_schedule_day":
+                            self.handle_schedule_day_selection(chat_id, username, text)
+                            return
+                        elif state.get("action") == "select_shift":
+                            self.handle_shift_selection(chat_id, username, text)
+                            return
                     
                     if text.startswith("/start"):
                         self.handle_start(chat_id, user)
@@ -1173,119 +1579,19 @@ class SimpleSchoolBot:
                     elif text in ["📚 Моё расписание", "🏫 Общее расписание", "🔔 Звонки", "ℹ️ Помощь"]:
                         self.handle_main_menu(chat_id, user_id, text, username)
                     elif text in ["👥 Список пользователей", "❌ Удалить пользователя", "📝 Редактировать расписание", 
-                                  "🏫 Управление классами", "🕧 Управление звонками", "📤 Загрузить Excel", "📊 Статистика", "⬅️ Назад",
-                                  "➕ Добавить класс", "➖ Удалить класс", "⬅️ Назад в админку", 
-                                  "✏️ Изменить звонок", "👀 Посмотреть все звонки"]:
+                                  "🏫 Управление классами", "🕧 Управление звонками", "📤 Загрузить Excel", "📊 Статистика", "⬅️ Назад"]:
                         self.handle_admin_menu(chat_id, username, text)
+                    elif text in ["1 смена", "2 смена"]:
+                        self.handle_shift_selection(chat_id, username, text)
+                    elif text == "⬅️ Назад" or self.is_valid_class(text):
+                        self.handle_main_menu(chat_id, user_id, text, username)
                     else:
                         self.handle_registration(chat_id, user_id, text)
-            
-            elif "callback_query" in update:
-                callback_query = update["callback_query"]
-                data = callback_query["data"]
-                chat_id = callback_query["message"]["chat"]["id"]
-                user = callback_query["from"]
-                username = user.get("username", "")
-                
-                if user.get("id") and self.rate_limiter.is_limited(user["id"]):
-                    self.log_security_event("rate_limit_exceeded", user["id"], f"Callback from: {username}")
-                    return
-                
-                self.answer_callback_query(callback_query["id"])
-                
-                if data.startswith("class_"):
-                    class_name = data.replace("class_", "")
-                    
-                    if username in self.admin_states and self.admin_states[username].get("action") == "edit_schedule_class":
-                        self.handle_schedule_class_selection(chat_id, username, class_name)
-                    else:
-                        # Для общего расписания - предлагаем выбрать день
-                        self.send_message(
-                            chat_id,
-                            f"Выберите день недели для расписания {self.safe_message(class_name)} класса:",
-                            self.day_selection_keyboard(class_name)
-                        )
-                
-                elif data.startswith("schedule_"):
-                    # Обработка выбора дня для общего расписания
-                    parts = data.split("_")
-                    if len(parts) >= 3:
-                        class_name = parts[1]
-                        day_code = "_".join(parts[2:])
-                        
-                        schedule = self.get_schedule(class_name, day_code)
-                        
-                        day_names = {
-                            "monday": "Понедельник",
-                            "tuesday": "Вторник",
-                            "wednesday": "Среда",
-                            "thursday": "Четверг", 
-                            "friday": "Пятница",
-                            "saturday": "Суббота"
-                        }
-                        
-                        day_name = day_names.get(day_code, day_code)
-                        
-                        if schedule:
-                            schedule_text = f"📅 <b>Расписание {self.safe_message(class_name)} класса</b>\n{day_name}\n\n"
-                            for lesson in schedule:
-                                schedule_text += f"{lesson[0]}. <b>{self.safe_message(lesson[1])}</b>"
-                                if lesson[2]:
-                                    schedule_text += f" ({self.safe_message(lesson[2])})"
-                                if lesson[3]:
-                                    schedule_text += f" - {self.safe_message(lesson[3])}"
-                                schedule_text += "\n"
-                        else:
-                            schedule_text = f"❌ Расписание для {self.safe_message(class_name)} класса на {day_name.lower()} не найдено"
-                        
-                        self.send_message(chat_id, schedule_text)
-                
-                elif data.startswith("day_"):
-                    day_code = data.replace("day_", "")
-                    
-                    if username in self.admin_states and self.admin_states[username].get("action") == "edit_schedule_day":
-                        self.handle_schedule_day_selection(chat_id, username, day_code)
-                    else:
-                        user_data = self.get_user(user["id"])
-                        if user_data:
-                            class_name = user_data[2]
-                            schedule = self.get_schedule(class_name, day_code)
-                            
-                            day_names = {
-                                "monday": "Понедельник",
-                                "tuesday": "Вторник",
-                                "wednesday": "Среда", 
-                                "thursday": "Четверг",
-                                "friday": "Пятница",
-                                "saturday": "Суббота"
-                            }
-                            
-                            day_name = day_names.get(day_code, day_code)
-                            
-                            if schedule:
-                                schedule_text = f"📅 <b>Расписание {self.safe_message(class_name)} класса</b>\n{day_name}\n\n"
-                                for lesson in schedule:
-                                    schedule_text += f"{lesson[0]}. <b>{self.safe_message(lesson[1])}</b>"
-                                    if lesson[2]:
-                                        schedule_text += f" ({self.safe_message(lesson[2])})"
-                                    if lesson[3]:
-                                        schedule_text += f" - {self.safe_message(lesson[3])}"
-                                    schedule_text += "\n"
-                            else:
-                                schedule_text = f"❌ Расписание для {self.safe_message(class_name)} класса на {day_name.lower()} не найдено"
-                            
-                            self.send_message(chat_id, schedule_text)
         
         except Exception as e:
             logger.error(f"Ошибка в process_update: {e}")
-    
-    def answer_callback_query(self, callback_query_id):
-        url = f"{BASE_URL}/answerCallbackQuery"
-        data = {"callback_query_id": callback_query_id}
-        try:
-            requests.post(url, json=data, timeout=5)
-        except Exception as e:
-            logger.error(f"Ошибка ответа на callback: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def run(self):
         logger.info("Бот запущен")
