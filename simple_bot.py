@@ -197,6 +197,18 @@ class SimpleSchoolBot:
         except Exception as e:
             logger.error(f"Ошибка создания таблиц: {e}")
             raise
+
+    def format_date(self, date_obj):
+        """Форматирует дату из базы данных в строку"""
+        if not date_obj:
+            return "неизвестно"
+        
+        if hasattr(date_obj, 'strftime'):  # Это объект datetime
+            return date_obj.strftime("%Y-%m-%d")
+        elif isinstance(date_obj, str):  # Это строка
+            return date_obj.split()[0]  # Берем только дату без времени
+        else:
+            return str(date_obj)
     
     def safe_message(self, text):
         if not text:
@@ -275,12 +287,12 @@ class SimpleSchoolBot:
         url = f"{BASE_URL}/getUpdates"
         params = {
             "offset": self.last_update_id + 1,
-            "timeout": 30,  # Увеличили таймаут
+            "timeout": 30,
             "limit": 100
         }
         
         try:
-            response = requests.get(url, params=params, timeout=35)  # Увеличили общий таймаут
+            response = requests.get(url, params=params, timeout=35)
             result = response.json()
             
             if not result.get("ok") and "Conflict" in str(result.get("description", "")):
@@ -537,6 +549,7 @@ class SimpleSchoolBot:
             logger.error(f"Ошибка обновления расписания звонков: {e}")
             return False
 
+    # УЛУЧШЕННЫЙ ПАРСЕР EXCEL
     def parse_excel_schedule(self, file_content, shift):
         try:
             import pandas as pd
@@ -544,7 +557,6 @@ class SimpleSchoolBot:
             lessons_data = []
             
             logger.info(f"=== НАЧАЛО ПАРСИНГА ДЛЯ СМЕНЫ {shift} ===")
-            logger.info("Используется метод парсинга: method3 (структурный)")
             
             try:
                 excel_file = pd.ExcelFile(io.BytesIO(file_content))
@@ -558,15 +570,18 @@ class SimpleSchoolBot:
                 
                 logger.info(f"Выбран лист: '{selected_sheet}'")
                 
+                # Читаем Excel файл
                 df = pd.read_excel(io.BytesIO(file_content), sheet_name=selected_sheet, header=None)
                 logger.info(f"Размер таблицы: {df.shape} (строк: {df.shape[0]}, колонок: {df.shape[1]})")
                 
+                # Логируем структуру для отладки
                 self._log_file_structure(df, selected_sheet)
                 
-                success = self._parse_method3(df, shift, lessons_data, selected_sheet)
+                # Парсим расписание
+                success = self._parse_improved_method(df, shift, lessons_data, selected_sheet)
                 
                 if not success:
-                    logger.error("Метод парсинга не дал результатов")
+                    logger.error("Парсинг не дал результатов")
                     return None
                 
             except Exception as e:
@@ -621,53 +636,51 @@ class SimpleSchoolBot:
     def _log_file_structure(self, df, sheet_name):
         logger.info(f"=== СТРУКТУРА ФАЙЛА '{sheet_name}' ===")
         
-        logger.info("Первые 15 строк файла:")
-        for i in range(min(15, len(df))):
+        logger.info("Первые 10 строк файла:")
+        for i in range(min(10, len(df))):
             row_preview = []
-            for j in range(min(20, len(df.columns))):
+            for j in range(min(10, len(df.columns))):
                 cell_value = df.iloc[i, j]
                 if pd.isna(cell_value):
                     row_preview.append("")
                 else:
                     row_preview.append(str(cell_value).strip())
             logger.info(f"Строка {i:2d}: {row_preview}")
-        
-        non_empty_cells = 0
-        for i in range(min(20, len(df))):
-            for j in range(min(20, len(df.columns))):
-                if pd.notna(df.iloc[i, j]) and str(df.iloc[i, j]).strip():
-                    non_empty_cells += 1
-        
-        logger.info(f"Непустых ячеек в первых 20x20: {non_empty_cells}")
 
-    def _parse_method3(self, df, shift, lessons_data, sheet_name):
+    def _parse_improved_method(self, df, shift, lessons_data, sheet_name):
+        """Улучшенный метод парсинга Excel файла"""
         try:
-            logger.info("=== МЕТОД 3: СТРУКТУРНЫЙ ПАРСИНГ ===")
+            logger.info("=== УЛУЧШЕННЫЙ МЕТОД ПАРСИНГА ===")
             
-            class_row_idx = self._find_class_header_row(df)
+            # Находим строку с классами
+            class_row_idx = self._find_class_row(df)
             if class_row_idx is None:
-                logger.error("Не удалось найти строку с заголовками классов")
+                logger.error("Не удалось найти строку с классами")
                 return False
             
             logger.info(f"Найдена строка с классами: строка {class_row_idx}")
             
-            class_columns = self._extract_class_columns(df, class_row_idx)
+            # Извлекаем информацию о классах и колонках
+            class_columns = self._extract_classes_and_columns(df, class_row_idx)
             if not class_columns:
                 logger.error("Не удалось определить классы и их колонки")
                 return False
             
             logger.info(f"Найдены классы и колонки: {class_columns}")
             
-            day_rows = self._find_day_rows(df)
+            # Находим дни недели
+            day_rows = self._find_days(df)
             if not day_rows:
                 logger.error("Не удалось найти дни недели")
                 return False
             
             logger.info(f"Найдены дни недели: {day_rows}")
             
+            # Обрабатываем каждый день
             for day_name, day_row_idx in day_rows:
                 logger.info(f"Обрабатываем день: {day_name} (строка {day_row_idx})")
                 
+                # Определяем границы дня
                 next_day_idx = None
                 for next_day, next_idx in day_rows:
                     if next_idx > day_row_idx:
@@ -676,49 +689,53 @@ class SimpleSchoolBot:
                 
                 end_row = next_day_idx if next_day_idx else len(df)
                 
-                day_lessons = self._parse_day_schedule(df, day_row_idx, end_row, class_columns, shift, day_name)
+                # Парсим расписание для дня
+                day_lessons = self._parse_day(df, day_row_idx, end_row, class_columns, day_name)
                 lessons_data.extend(day_lessons)
                 logger.info(f"Для дня {day_name} найдено {len(day_lessons)} уроков")
             
-            logger.info(f"Метод 3: успешно распаршено {len(lessons_data)} уроков")
+            logger.info(f"Успешно распаршено {len(lessons_data)} уроков")
             return len(lessons_data) > 0
             
         except Exception as e:
-            logger.error(f"Ошибка в методе 3: {e}")
+            logger.error(f"Ошибка в улучшенном методе парсинга: {e}")
             import traceback
             logger.error(f"Трассировка: {traceback.format_exc()}")
             return False
 
-    def _find_class_header_row(self, df):
-        for i in range(min(15, len(df))):
+    def _find_class_row(self, df):
+        """Находит строку с названиями классов"""
+        for i in range(min(10, len(df))):
             row = df.iloc[i]
             class_count = 0
             for cell in row:
-                if pd.notna(cell) and self._is_class_header(str(cell)):
+                if pd.notna(cell) and self._is_class_cell(str(cell)):
                     class_count += 1
-            if class_count >= 2:
+            if class_count >= 2:  # Нужно хотя бы 2 класса
                 return i
         return None
 
-    def _extract_class_columns(self, df, class_row_idx):
+    def _extract_classes_and_columns(self, df, class_row_idx):
+        """Извлекает классы и их колонки"""
         class_columns = {}
         class_row = df.iloc[class_row_idx]
         
         for j, cell in enumerate(class_row):
             if pd.notna(cell):
                 cell_str = str(cell).strip()
-                class_name = self._extract_class_name(cell_str)
+                class_name = self._parse_class_name(cell_str)
                 if class_name:
                     class_columns[class_name] = j
-                    logger.debug(f"Найден класс {class_name} в колонке {j}")
+                    logger.info(f"Найден класс {class_name} в колонке {j}")
         
         return class_columns
 
-    def _find_day_rows(self, df):
+    def _find_days(self, df):
+        """Находит строки с днями недели"""
         day_rows = []
         day_patterns = {
             'понедельник': 'monday',
-            'вторник': 'tuesday',
+            'вторник': 'tuesday', 
             'среда': 'wednesday',
             'четверг': 'thursday',
             'пятница': 'friday',
@@ -726,13 +743,13 @@ class SimpleSchoolBot:
         }
         
         for i in range(len(df)):
-            for j in range(min(3, len(df.columns))):
+            for j in range(min(5, len(df.columns))):
                 if pd.notna(df.iloc[i, j]) and isinstance(df.iloc[i, j], str):
                     cell_value = str(df.iloc[i, j]).lower().strip()
                     for ru_day, en_day in day_patterns.items():
                         if ru_day in cell_value:
                             day_rows.append((en_day, i))
-                            logger.debug(f"Найден день '{en_day}' в строке {i}, колонке {j}")
+                            logger.info(f"Найден день '{en_day}' в строке {i}, колонке {j}")
                             break
                     else:
                         continue
@@ -741,18 +758,18 @@ class SimpleSchoolBot:
         day_rows.sort(key=lambda x: x[1])
         return day_rows
 
-    def _parse_day_schedule(self, df, start_row, end_row, class_columns, shift, day_name):
+    def _parse_day(self, df, start_row, end_row, class_columns, day_name):
+        """Парсит расписание для одного дня"""
         lessons = []
         
-        # Собираем все номера уроков из колонки с номерами (индекс 1)
+        # Собираем номера уроков
         lesson_numbers = {}
-        for row_idx in range(start_row, min(end_row, len(df))):
+        for row_idx in range(start_row + 1, min(end_row, len(df))):
             row = df.iloc[row_idx]
             
-            # Ищем номер урока во второй колонке (индекс 1)
-            if len(row) > 1 and pd.notna(row[1]):
-                lesson_str = str(row[1]).strip()
-                # Извлекаем число из ячейки
+            # Ищем номер урока в первой колонке
+            if len(row) > 0 and pd.notna(row[0]):
+                lesson_str = str(row[0]).strip()
                 numbers = re.findall(r'\d+', lesson_str)
                 if numbers:
                     lesson_num = int(numbers[0])
@@ -760,78 +777,113 @@ class SimpleSchoolBot:
                         lesson_numbers[row_idx] = lesson_num
                         logger.debug(f"Найден номер урока {lesson_num} в строке {row_idx}")
         
-        # Обрабатываем строки с уроками
         current_lesson_num = 1
         
-        for row_idx in range(start_row, min(end_row, len(df))):
+        for row_idx in range(start_row + 1, min(end_row, len(df))):
             row = df.iloc[row_idx]
             
+            # Пропускаем пустые строки
             if all(pd.isna(cell) for cell in row):
                 continue
             
             # Определяем номер урока
-            lesson_num = lesson_numbers.get(row_idx)
-            if lesson_num is not None:
-                current_lesson_num = lesson_num
-            else:
-                # Если номер не найден, используем текущий
-                lesson_num = current_lesson_num
+            lesson_num = lesson_numbers.get(row_idx, current_lesson_num)
             
-            lesson_found_in_row = False
+            lesson_found = False
             
             for class_name, col_idx in class_columns.items():
-                # Проверяем колонку с предметом
-                subject_col = col_idx
-                if subject_col < len(row) and pd.notna(row[subject_col]):
-                    subject = str(row[subject_col]).strip()
+                if col_idx >= len(row):
+                    continue
                     
-                    # Пропускаем пустые значения и названия дней
-                    if not subject or subject in ['-', '—', ''] or self._is_day_of_week(subject):
+                subject_cell = row[col_idx]
+                if pd.notna(subject_cell):
+                    subject = str(subject_cell).strip()
+                    
+                    # Пропускаем пустые и служебные значения
+                    if not subject or subject in ['-', '—', ''] or self._is_day_name(subject):
                         continue
                     
-                    # Получаем кабинет из следующей колонки
-                    room = ""
-                    room_col = col_idx + 1
-                    if room_col < len(row) and pd.notna(row[room_col]):
-                        room_cell = str(row[room_col]).strip()
-                        if room_cell and not self._is_day_of_week(room_cell):
-                            room = room_cell
+                    # Извлекаем учителя и кабинет
+                    teacher, room = self._extract_teacher_and_room(subject)
+                    
+                    # Если кабинет не найден в subject, ищем в следующей колонке
+                    if not room and col_idx + 1 < len(row) and pd.notna(row[col_idx + 1]):
+                        room_candidate = str(row[col_idx + 1]).strip()
+                        if room_candidate and not self._is_day_name(room_candidate) and room_candidate not in ['-', '—']:
+                            room = room_candidate
                     
                     lessons.append({
                         'class': class_name,
                         'day': day_name,
                         'lesson_number': lesson_num,
                         'subject': subject,
+                        'teacher': teacher,
                         'room': room,
-                        'teacher': '',
                         'shift': shift
                     })
                     
-                    lesson_found_in_row = True
-                    logger.debug(f"Добавлен урок: {class_name}, {day_name}, {lesson_num}, {subject}, {room}")
+                    lesson_found = True
+                    logger.debug(f"Добавлен урок: {class_name}, {day_name}, {lesson_num}, {subject}, {teacher}, {room}")
             
-            # Увеличиваем номер урока только если в строке был найден хотя бы один урок
-            # и если мы не используем явный номер из ячейки
-            if lesson_found_in_row and row_idx not in lesson_numbers:
+            # Увеличиваем номер урока если нашли хотя бы один урок в строке
+            if lesson_found:
                 current_lesson_num += 1
         
         return lessons
 
-    def _is_class_header(self, text):
-        text = text.lower().strip()
-        patterns = [
-            r'^\d[абв]$',
-            r'^10[пр]$',
-            r'^11[р]$',
-            r'^\d[абв]\s*$',
-            r'^\d[абв].*класс',
-            r'^класс.*\d[абв]'
-        ]
-        return any(re.match(pattern, text) for pattern in patterns)
+    def _extract_teacher_and_room(self, subject_text):
+        """Извлекает учителя и кабинет из текста предмета"""
+        teacher = ""
+        room = ""
+        
+        subject = subject_text
+        
+        # Извлекаем учителя из скобок
+        if '(' in subject and ')' in subject:
+            teacher_match = re.search(r'\((.*?)\)', subject)
+            if teacher_match:
+                teacher = teacher_match.group(1)
+                subject = re.sub(r'\(.*?\)', '', subject).strip()
+        
+        # Извлекаем кабинет (обычно после тире или в конце)
+        if ' - ' in subject:
+            parts = subject.split(' - ', 1)
+            subject = parts[0].strip()
+            room_candidate = parts[1].strip()
+            # Проверяем, что это похоже на кабинет (число или число+буква)
+            if re.match(r'^\d+[а-я]?$', room_candidate, re.IGNORECASE):
+                room = room_candidate
+        
+        # Если кабинет не найжен, проверяем конец строки
+        if not room:
+            # Ищем число в конце строки как кабинет
+            room_match = re.search(r'(\d+[а-я]?)$', subject, re.IGNORECASE)
+            if room_match:
+                room = room_match.group(1)
+                subject = re.sub(r'\s*\d+[а-я]?$', '', subject).strip()
+        
+        return teacher, room
 
-    def _extract_class_name(self, text):
+    def _is_class_cell(self, text):
+        """Проверяет, является ли текст названием класса"""
         text = text.lower().strip()
         
+        # Убираем лишние слова
+        text = re.sub(r'(класс|смена|урок|расписание|№|\s)', '', text)
+        
+        patterns = [
+            r'^[5-9][абв]$',
+            r'^10[пр]$',
+            r'^11[р]$'
+        ]
+        
+        return any(re.match(pattern, text) for pattern in patterns)
+
+    def _parse_class_name(self, text):
+        """Извлекает название класса из текста"""
+        text = text.lower().strip()
+        
+        # Очищаем текст
         text = re.sub(r'(класс|смена|урок|расписание|№)', '', text).strip()
         
         patterns = [
@@ -848,7 +900,8 @@ class SimpleSchoolBot:
         
         return None
 
-    def _is_day_of_week(self, text):
+    def _is_day_name(self, text):
+        """Проверяет, является ли текст названием дня недели"""
         text = text.lower().strip()
         days = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота']
         return any(day in text for day in days)
@@ -862,12 +915,14 @@ class SimpleSchoolBot:
             imported_count = 0
             error_count = 0
             
+            # Удаляем старое расписание для классов из файла
             imported_classes = set(lesson['class'] for lesson in lessons_data)
             
             for class_name in imported_classes:
                 self.db.execute("DELETE FROM schedule WHERE class = ?", (class_name,))
                 logger.info(f"Удалены старые уроки для класса {class_name}")
             
+            # Импортируем новые данные
             for lesson in lessons_data:
                 try:
                     lesson_number = int(lesson['lesson_number'])
@@ -883,7 +938,7 @@ class SimpleSchoolBot:
                     logger.error(f"Ошибка импорта урока {lesson}: {e}")
                     error_count += 1
             
-            message = f"✅ Успешно импортировано {imported_count} уроков для {shift} смены\nМетод: method3 (структурный)"
+            message = f"✅ Успешно импортировано {imported_count} уроков для {shift} смены"
             if error_count > 0:
                 message += f", ошибок: {error_count}"
                 
@@ -892,6 +947,7 @@ class SimpleSchoolBot:
             logger.error(f"Ошибка импорта из Excel для смены {shift}: {e}")
             return False, f"Ошибка импорта для {shift} смены: {str(e)}"
 
+    # ОСТАЛЬНЫЕ МЕТОДЫ БОТА (без изменений)
     def handle_start(self, chat_id, user):
         user_data = self.get_user(user["id"])
         
@@ -1339,9 +1395,10 @@ class SimpleSchoolBot:
         
         users_text = "👥 <b>Список пользователей</b>\n\n"
         for user in users:
-            reg_date = user[3].split()[0] if user[3] else "неизвестно"
+            reg_date_str = self.format_date(user[3])
+                
             users_text += f"👤 {self.safe_message(user[1])} - {self.safe_message(user[2])} (ID: {user[0]})\n"
-            users_text += f"   📅 Зарегистрирован: {reg_date}\n\n"
+            users_text += f"   📅 Зарегистрирован: {reg_date_str}\n\n"
         
         self.send_message(chat_id, users_text, self.admin_menu_inline_keyboard())
     
