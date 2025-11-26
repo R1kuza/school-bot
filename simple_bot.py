@@ -77,6 +77,8 @@ class DatabaseManager:
             db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "school_bot.db")
             self.conn = sqlite3.connect(db_path, check_same_thread=False)
             self.db_type = 'sqlite'
+            # Включаем поддержку внешних ключей для SQLite
+            self.conn.execute("PRAGMA foreign_keys = ON")
             logger.info("✅ Используется SQLite база данных")
         except Exception as e:
             logger.error(f"❌ Ошибка подключения к SQLite: {e}")
@@ -155,7 +157,7 @@ class DatabaseManager:
                     weather_notifications BOOLEAN DEFAULT FALSE,
                     news_notifications BOOLEAN DEFAULT TRUE,
                     achievement_notifications BOOLEAN DEFAULT TRUE,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 )
             """)
             
@@ -166,7 +168,7 @@ class DatabaseManager:
                     role_type TEXT NOT NULL CHECK(role_type IN ('guest', 'student', 'teacher')),
                     additional_info TEXT,
                     registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 )
             """)
             
@@ -201,8 +203,8 @@ class DatabaseManager:
                     achievement_id INTEGER,
                     achieved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (user_id, achievement_id),
-                    FOREIGN KEY (user_id) REFERENCES users(user_id),
-                    FOREIGN KEY (achievement_id) REFERENCES achievements(id)
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                    FOREIGN KEY (achievement_id) REFERENCES achievements(id) ON DELETE CASCADE
                 )
             """)
             
@@ -214,7 +216,7 @@ class DatabaseManager:
                     action_type TEXT NOT NULL,
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     details TEXT,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 )
             """)
             
@@ -229,7 +231,7 @@ class DatabaseManager:
                     lesson_date DATE NOT NULL,
                     teacher_comment TEXT,
                     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 )
             """)
             
@@ -726,10 +728,23 @@ class SimpleSchoolBot:
         return isinstance(user_id, int) and user_id > 0
     
     def create_user(self, user_id, full_name, class_name, username=None):
+        """ИСПРАВЛЕННЫЙ МЕТОД: Убрана проверка лимита для существующих пользователей"""
         if not self.is_valid_user_id(user_id):
             return False
             
         try:
+            # Получаем текущего пользователя (если существует)
+            current_user = self.get_user(user_id)
+            
+            # Если пользователь уже существует, просто обновляем данные
+            if current_user:
+                self.db.execute(
+                    "UPDATE users SET full_name = ?, class = ?, username = ? WHERE user_id = ?",
+                    (full_name, class_name, username, user_id)
+                )
+                return True
+            
+            # Только для НОВЫХ пользователей проверяем лимит
             result = self.db.fetchone("SELECT COUNT(*) FROM users WHERE class = ?", (class_name,))
             count = result[0] if result else 0
             
@@ -737,8 +752,9 @@ class SimpleSchoolBot:
                 self.log_security_event("class_limit_exceeded", user_id, f"Class: {class_name}")
                 return False
             
+            # Создаем нового пользователя
             self.db.execute(
-                "INSERT INTO users (user_id, full_name, class, username) VALUES (?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET full_name = EXCLUDED.full_name, class = EXCLUDED.class, username = EXCLUDED.username",
+                "INSERT INTO users (user_id, full_name, class, username) VALUES (?, ?, ?, ?)",
                 (user_id, full_name, class_name, username)
             )
             return True
@@ -751,12 +767,8 @@ class SimpleSchoolBot:
             return False
             
         try:
+            # Удаляем пользователя из всех таблиц (CASCADE должно работать)
             self.db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
-            self.db.execute("DELETE FROM user_roles WHERE user_id = ?", (user_id,))
-            self.db.execute("DELETE FROM notification_settings WHERE user_id = ?", (user_id,))
-            self.db.execute("DELETE FROM user_achievements WHERE user_id = ?", (user_id,))
-            self.db.execute("DELETE FROM user_activity WHERE user_id = ?", (user_id,))
-            self.db.execute("DELETE FROM student_grades WHERE user_id = ?", (user_id,))
             return True
         except Exception as e:
             logger.error(f"Ошибка удаления пользователя: {e}")
@@ -2579,7 +2591,7 @@ class SimpleSchoolBot:
             logger.error(traceback.format_exc())
     
     def run(self):
-        logger.info("Бот запущен с улучшениями пользовательского опыта!")
+        logger.info("Бот запущен с исправлениями проблем с лимитами пользователей!")
         
         try:
             delete_url = f"{BASE_URL}/deleteWebhook"
