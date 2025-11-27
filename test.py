@@ -17,15 +17,6 @@ import pytz
 from threading import Thread
 import schedule
 
-# ИИ модель
-try:
-    from transformers import pipeline, AutoTokenizer, AutoModel
-    import torch
-    ML_AVAILABLE = True
-except ImportError:
-    ML_AVAILABLE = False
-    torch = None
-
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -52,108 +43,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-class LazyMLModel:
-    """Ленивая загрузка ML-моделей для экономии памяти"""
-    def __init__(self):
-        self._classifier = None
-        self._tokenizer = None
-        self._model = None
-        self._loaded = False
-    
-    def load_model(self):
-        """Загрузка модели только при первом использовании"""
-        if self._loaded or not ML_AVAILABLE:
-            return
-            
-        try:
-            logger.info("🔄 Загрузка rubert-tiny2...")
-            
-            # Используем легкий классификатор для анализа текста
-            self._classifier = pipeline(
-                "text-classification",
-                model="cointegrated/rubert-tiny2",
-                tokenizer="cointegrated/rubert-tiny2",
-                framework="pt"
-            )
-            
-            self._loaded = True
-            logger.info("✅ Rubert-tiny2 загружен для анализа текста")
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка загрузки модели: {e}")
-            self._loaded = False
-    
-    def analyze_sentiment(self, text):
-        """Анализ настроения текста"""
-        if not self._loaded:
-            self.load_model()
-            
-        if not self._loaded:
-            return "neutral"
-            
-        try:
-            result = self._classifier(text[:512])[0]  # Ограничиваем длину текста
-            label = result['label']
-            score = result['score']
-            
-            if label == 'POSITIVE' and score > 0.7:
-                return "positive"
-            elif label == 'NEGATIVE' and score > 0.7:
-                return "negative"
-            else:
-                return "neutral"
-                
-        except Exception as e:
-            logger.error(f"Ошибка анализа настроения: {e}")
-            return "neutral"
-    
-    def get_text_intent(self, text):
-        """Определение намерения пользователя"""
-        if not self._loaded:
-            self.load_model()
-            
-        if not self._loaded:
-            return self._fallback_intent(text)
-            
-        try:
-            # Простой анализ на основе ключевых слов + ML
-            text_lower = text.lower()
-            
-            intents = {
-                'schedule': ['расписание', 'урок', 'расписания', 'когда урок', 'во сколько'],
-                'weather': ['погода', 'погоду', 'температура', 'на улице', 'холодно', 'тепло'],
-                'homework': ['домашнее задание', 'домашка', 'дз', 'задание на дом'],
-                'grades': ['оценка', 'оценки', 'отметка', 'балл', 'дневник'],
-                'teacher': ['учитель', 'преподаватель', 'педагог'],
-                'help': ['помощь', 'помоги', 'справка', 'как пользоваться', 'что ты умеешь'],
-                'news': ['новость', 'новости', 'объявление', 'событие']
-            }
-            
-            for intent, keywords in intents.items():
-                if any(keyword in text_lower for keyword in keywords):
-                    return intent
-                    
-            return 'general'
-            
-        except Exception as e:
-            logger.error(f"Ошибка определения намерения: {e}")
-            return self._fallback_intent(text)
-    
-    def _fallback_intent(self, text):
-        """Резервный метод определения намерения"""
-        text_lower = text.lower()
-        
-        if any(word in text_lower for word in ['расписание', 'урок', 'расписания']):
-            return 'schedule'
-        elif any(word in text_lower for word in ['погода', 'погоду', 'температура']):
-            return 'weather'
-        elif any(word in text_lower for word in ['домашнее', 'домашка', 'дз']):
-            return 'homework'
-        elif any(word in text_lower for word in ['оценка', 'оценки', 'балл']):
-            return 'grades'
-        else:
-            return 'general'
 
 class DatabaseManager:
     def __init__(self):
@@ -344,20 +233,6 @@ class DatabaseManager:
                 )
             """)
             
-            # ТАБЛИЦА ДЛЯ СИСТЕМЫ РАССЫЛКИ
-            self.execute("""
-                CREATE TABLE IF NOT EXISTS broadcast_messages (
-                    id SERIAL PRIMARY KEY,
-                    admin_username TEXT NOT NULL,
-                    message_text TEXT NOT NULL,
-                    target_audience TEXT DEFAULT 'all',
-                    sent_count INTEGER DEFAULT 0,
-                    failed_count INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    status TEXT DEFAULT 'pending'
-                )
-            """)
-            
             # Добавляем начальные данные для звонков
             result = self.fetchone("SELECT COUNT(*) FROM bell_schedule")
             if result and result[0] == 0:
@@ -427,8 +302,6 @@ class SimpleSchoolBot:
         self.processed_updates = set()
         self.rate_limiter = RateLimiter()
         self.db = DatabaseManager()
-        self.ml_model = LazyMLModel()  # ИИ модель
-        
         self.init_db()
         self.setup_scheduler()
     
@@ -450,221 +323,6 @@ class SimpleSchoolBot:
         
         scheduler_thread = Thread(target=run_scheduler, daemon=True)
         scheduler_thread.start()
-    
-    # СИСТЕМА РАССЫЛКИ СООБЩЕНИЙ
-    def start_broadcast(self, chat_id, username):
-        """Начало процесса рассылки"""
-        if not self.is_admin(username):
-            self.send_message(chat_id, "❌ У вас нет прав для рассылки сообщений")
-            return
-            
-        self.admin_states[username] = {"action": "broadcast_waiting_message"}
-        self.send_message(
-            chat_id,
-            "📢 <b>Система рассылки сообщений</b>\n\n"
-            "Отправьте сообщение для рассылки всем пользователям.\n\n"
-            "Вы можете использовать HTML-разметку:\n"
-            "• <code>&lt;b&gt;жирный текст&lt;/b&gt;</code>\n"
-            "• <code>&lt;i&gt;курсив&lt;/i&gt;</code>\n"
-            "• <code>&lt;code&gt;код&lt;/code&gt;</code>\n\n"
-            "Для отмены отправьте /cancel",
-            self.cancel_keyboard()
-        )
-    
-    def handle_broadcast_message(self, chat_id, username, text):
-        """Обработка сообщения для рассылки"""
-        if username not in self.admin_states:
-            return
-            
-        state = self.admin_states[username]
-        
-        if state.get("action") == "broadcast_waiting_message":
-            # Сохраняем сообщение и запрашиваем подтверждение
-            state["action"] = "broadcast_confirmation"
-            state["message"] = text
-            
-            users_count = self.db.fetchone("SELECT COUNT(*) FROM users")[0]
-            
-            self.send_message(
-                chat_id,
-                f"📢 <b>Подтверждение рассылки</b>\n\n"
-                f"Сообщение для рассылки:\n\n{text}\n\n"
-                f"Получателей: {users_count} пользователей\n\n"
-                f"Отправить рассылку?",
-                {
-                    "inline_keyboard": [
-                        [{"text": "✅ Да, отправить", "callback_data": "broadcast_confirm"}],
-                        [{"text": "❌ Отменить", "callback_data": "broadcast_cancel"}]
-                    ]
-                }
-            )
-    
-    def execute_broadcast(self, chat_id, username):
-        """Выполнение рассылки сообщений"""
-        if username not in self.admin_states:
-            return
-            
-        state = self.admin_states[username]
-        message_text = state.get("message", "")
-        
-        if not message_text:
-            self.send_message(chat_id, "❌ Ошибка: сообщение не найдено")
-            return
-            
-        # Сохраняем запись о рассылке
-        broadcast_id = self.db.execute(
-            "INSERT INTO broadcast_messages (admin_username, message_text, status) VALUES (?, ?, ?) RETURNING id",
-            (username, message_text, 'sending')
-        ).fetchone()[0]
-        
-        self.send_message(chat_id, "🔄 Начинаю рассылку сообщений...")
-        
-        # Получаем всех пользователей
-        users = self.db.fetchall("SELECT user_id FROM users")
-        total_users = len(users)
-        success_count = 0
-        failed_count = 0
-        
-        # Рассылка с ограничением скорости
-        for i, user in enumerate(users):
-            user_id = user[0]
-            
-            try:
-                self.send_message(user_id, message_text)
-                success_count += 1
-                
-                # Логируем каждые 10 отправок
-                if i % 10 == 0:
-                    self.db.execute(
-                        "UPDATE broadcast_messages SET sent_count = ?, failed_count = ? WHERE id = ?",
-                        (success_count, failed_count, broadcast_id)
-                    )
-                
-                # Задержка для избежания ограничений Telegram
-                time.sleep(0.1)
-                
-            except Exception as e:
-                logger.error(f"Ошибка отправки пользователю {user_id}: {e}")
-                failed_count += 1
-        
-        # Финальное обновление статуса
-        self.db.execute(
-            "UPDATE broadcast_messages SET sent_count = ?, failed_count = ?, status = ? WHERE id = ?",
-            (success_count, failed_count, 'completed', broadcast_id)
-        )
-        
-        # Отчет о рассылке
-        report = (
-            f"📢 <b>Рассылка завершена</b>\n\n"
-            f"✅ Успешно отправлено: {success_count}\n"
-            f"❌ Не удалось отправить: {failed_count}\n"
-            f"👥 Всего пользователей: {total_users}"
-        )
-        
-        self.send_message(chat_id, report)
-        
-        # Очищаем состояние
-        if username in self.admin_states:
-            del self.admin_states[username]
-    
-    def get_broadcast_history(self, chat_id):
-        """Получение истории рассылок"""
-        broadcasts = self.db.fetchall(
-            "SELECT admin_username, message_text, sent_count, failed_count, created_at FROM broadcast_messages ORDER BY created_at DESC LIMIT 10"
-        )
-        
-        if not broadcasts:
-            self.send_message(chat_id, "📋 История рассылок пуста")
-            return
-            
-        history_text = "📋 <b>История рассылок</b>\n\n"
-        
-        for broadcast in broadcasts:
-            admin, message, sent, failed, created_at = broadcast
-            date_str = self.format_date(created_at)
-            preview = message[:50] + "..." if len(message) > 50 else message
-            
-            history_text += (
-                f"👤 <b>Админ:</b> {admin}\n"
-                f"📅 <b>Дата:</b> {date_str}\n"
-                f"📨 <b>Статус:</b> {sent} ✓ / {failed} ✗\n"
-                f"💬 <b>Сообщение:</b> {preview}\n"
-                f"{'─' * 30}\n"
-            )
-        
-        self.send_message(chat_id, history_text)
-    
-    # ИИ ФУНКЦИИ
-    def analyze_user_message(self, text):
-        """Анализ сообщения пользователя с помощью ИИ"""
-        try:
-            intent = self.ml_model.get_text_intent(text)
-            sentiment = self.ml_model.analyze_sentiment(text)
-            
-            return {
-                "intent": intent,
-                "sentiment": sentiment,
-                "needs_attention": sentiment == "negative"
-            }
-        except Exception as e:
-            logger.error(f"Ошибка ИИ анализа: {e}")
-            return {
-                "intent": "general",
-                "sentiment": "neutral", 
-                "needs_attention": False
-            }
-    
-    def get_smart_response(self, user_id, text):
-        """Умный ответ на основе ИИ анализа"""
-        analysis = self.analyze_user_message(text)
-        user_data = self.get_user(user_id)
-        
-        # Логируем анализ
-        self.db.execute(
-            "INSERT INTO user_activity (user_id, action_type, details) VALUES (?, ?, ?)",
-            (user_id, "ai_analysis", f"intent: {analysis['intent']}, sentiment: {analysis['sentiment']}")
-        )
-        
-        # Ответы в зависимости от намерения
-        responses = {
-            'schedule': {
-                'positive': "📚 Рад, что ты интересуешься расписанием! Используй кнопку '📚 Моё расписание' для быстрого доступа.",
-                'negative': "📚 Похоже, тебе не нравится расписание? Можешь посмотреть его в разделе '📚 Моё расписание' - там всегда актуальная информация.",
-                'neutral': "📚 Расписание уроков доступно в разделе '📚 Моё расписание'. Там же можно посмотреть расписание для любого класса."
-            },
-            'weather': {
-                'positive': f"🌤️ {self.get_weather()} Отличная погода для учебы!",
-                'negative': f"🌤️ {self.get_weather()} Надеюсь, погода скоро улучшится!",
-                'neutral': f"🌤️ {self.get_weather()}"
-            },
-            'homework': {
-                'positive': "📝 Вижу, ты ответственно относишься к урокам! К сожалению, информация о домашних заданиях пока не в системе.",
-                'negative': "📝 Домашние задания бывают сложными... Если нужна помощь, обратись к учителям через бота.",
-                'neutral': "📝 Информация о домашних заданиях скоро появится в системе. Пока можешь уточнить у одноклассников или учителей."
-            },
-            'grades': {
-                'positive': "📊 Отличные оценки - это здорово! Продолжай в том же духе!",
-                'negative': "📊 Не расстраивайся из-за оценок! Главное - понимать материал. Оценки всегда можно улучшить.",
-                'neutral': "📊 Работа с оценками доступна в разделе '📊 Дневник'. Там можно посмотреть статистику успеваемости."
-            },
-            'general': {
-                'positive': "😊 Рад общению с тобой! Чем еще могу помочь?",
-                'negative': "😔 Похоже, что-то не так... Если нужна помощь, напиши /help или обратись к администраторам.",
-                'neutral': "🤖 Я школьный бот! Используй меню для навигации или напиши /help для справки."
-            }
-        }
-        
-        intent_responses = responses.get(analysis['intent'], responses['general'])
-        response = intent_responses.get(analysis['sentiment'], intent_responses['neutral'])
-        
-        # Добавляем эмодзи в зависимости от настроения
-        sentiment_emojis = {
-            'positive': "✨",
-            'negative': "💫", 
-            'neutral': "🌟"
-        }
-        
-        return f"{sentiment_emojis.get(analysis['sentiment'], '🌟')} {response}"
     
     # НОВЫЕ ФУНКЦИИ - УМНЫЕ УВЕДОМЛЕНИЯ
     def get_notification_settings(self, user_id):
@@ -1181,32 +839,7 @@ class SimpleSchoolBot:
             "resize_keyboard": True
         }
     
-    # НОВЫЕ КЛАВИАТУРЫ ДЛЯ РАССЫЛКИ
-    def admin_broadcast_keyboard(self):
-        return {
-            "inline_keyboard": [
-                [{"text": "📢 Создать рассылку", "callback_data": "admin_broadcast"}],
-                [{"text": "📋 История рассылок", "callback_data": "admin_broadcast_history"}],
-                [{"text": "⬅️ Назад", "callback_data": "admin_back"}]
-            ]
-        }
-    
-    # СУЩЕСТВУЮЩИЕ КЛАВИАТУРЫ
-    def admin_menu_inline_keyboard(self):
-        return {
-            "inline_keyboard": [
-                [{"text": "👥 Список пользователей", "callback_data": "admin_users"}],
-                [{"text": "❌ Удалить пользователя", "callback_data": "admin_delete_user"}],
-                [{"text": "📝 Редактировать расписание", "callback_data": "admin_edit_schedule"}],
-                [{"text": "🏫 Управление классами", "callback_data": "admin_manage_classes"}],
-                [{"text": "🕧 Управление звонками", "callback_data": "admin_bells"}],
-                [{"text": "📤 Загрузить Excel", "callback_data": "admin_upload_excel"}],
-                [{"text": "📢 Рассылка сообщений", "callback_data": "admin_broadcast_menu"}],  # НОВАЯ КНОПКА
-                [{"text": "📊 Статистика", "callback_data": "admin_stats"}],
-                [{"text": "⬅️ Назад", "callback_data": "admin_back"}]
-            ]
-        }
-    
+    # НОВЫЕ КЛАВИАТУРЫ
     def notifications_settings_keyboard(self):
         return {
             "inline_keyboard": [
@@ -1264,6 +897,21 @@ class SimpleSchoolBot:
             ]
         }
 
+    # СУЩЕСТВУЮЩИЕ КЛАВИАТУРЫ
+    def admin_menu_inline_keyboard(self):
+        return {
+            "inline_keyboard": [
+                [{"text": "👥 Список пользователей", "callback_data": "admin_users"}],
+                [{"text": "❌ Удалить пользователя", "callback_data": "admin_delete_user"}],
+                [{"text": "📝 Редактировать расписание", "callback_data": "admin_edit_schedule"}],
+                [{"text": "🏫 Управление классами", "callback_data": "admin_manage_classes"}],
+                [{"text": "🕧 Управление звонками", "callback_data": "admin_bells"}],
+                [{"text": "📤 Загрузить Excel", "callback_data": "admin_upload_excel"}],
+                [{"text": "📊 Статистика", "callback_data": "admin_stats"}],
+                [{"text": "⬅️ Назад", "callback_data": "admin_back"}]
+            ]
+        }
+    
     def classes_management_inline_keyboard(self):
         return {
             "inline_keyboard": [
@@ -1743,7 +1391,7 @@ class SimpleSchoolBot:
             logger.error(f"Ошибка импорта из Excel для смены {shift}: {e}")
             return False, f"Ошибка импорта для {shift} смены: {str(e)}"
 
-    # ОБНОВЛЕННЫЕ ОБРАБОТЧИКИ
+    # ОБНОВЛЕННЫЕ ОБРАБОТЧИКИ С НОВЫМИ ФУНКЦИЯМИ
     def handle_start(self, chat_id, user):
         user_data = self.get_user(user["id"])
         
@@ -1804,168 +1452,6 @@ class SimpleSchoolBot:
         text = "👨‍💼 <b>Панель администратора</b>\n\nВыберите действие:"
         self.send_message(chat_id, text, self.admin_menu_inline_keyboard())
     
-    # ОБНОВЛЕННЫЙ ОБРАБОТЧИК CALLBACK С РАССЫЛКОЙ
-    def handle_callback_query(self, update):
-        callback_query = update.get("callback_query")
-        if not callback_query:
-            return
-            
-        chat_id = callback_query["message"]["chat"]["id"]
-        user = callback_query["from"]
-        user_id = user["id"]
-        username = user.get("username", "")
-        data = callback_query["data"]
-        
-        logger.info(f"Callback received: {data} from user {username}")
-        
-        # Обработка новых callback для рассылки
-        if data == "admin_broadcast_menu":
-            self.handle_broadcast_menu(chat_id, username)
-        elif data == "admin_broadcast":
-            self.start_broadcast(chat_id, username)
-        elif data == "admin_broadcast_history":
-            self.get_broadcast_history(chat_id)
-        elif data == "broadcast_confirm":
-            self.execute_broadcast(chat_id, username)
-        elif data == "broadcast_cancel":
-            if username in self.admin_states:
-                del self.admin_states[username]
-            self.send_message(chat_id, "❌ Рассылка отменена", self.admin_menu_inline_keyboard())
-        
-        # Обработка остальных callback
-        elif data.startswith("toggle_"):
-            self.handle_toggle_setting(chat_id, user_id, data)
-        elif data == "my_achievements":
-            self.show_user_achievements(chat_id, user_id)
-        elif data == "achievement_progress":
-            self.show_achievement_progress(chat_id, user_id)
-        elif data == "recent_news":
-            self.show_recent_news(chat_id, user_id)
-        elif data == "news_stats":
-            self.show_news_statistics(chat_id, user_id)
-        elif data == "my_grades":
-            self.show_user_grades(chat_id, user_id)
-        elif data == "average_grade":
-            self.show_average_grades(chat_id, user_id)
-        elif data == "grades_by_subject":
-            self.show_grades_by_subject(chat_id, user_id)
-        elif data == "my_statistics":
-            self.show_detailed_statistics(chat_id, user_id)
-        elif data in ["settings_back", "achievements_back", "news_back", "diary_back", "stats_back"]:
-            self.send_message(chat_id, "Главное меню", self.main_menu_keyboard())
-        
-        # Существующие обработчики
-        elif data.startswith("day_"):
-            day_code = data[4:]
-            day_map = {
-                'monday': 'понедельник',
-                'tuesday': 'вторник', 
-                'wednesday': 'среда',
-                'thursday': 'четверг',
-                'friday': 'пятница',
-                'saturday': 'суббота'
-            }
-            day_text = day_map.get(day_code, day_code)
-            
-            if username in self.admin_states and self.admin_states[username].get("action") == "edit_schedule_day":
-                self.handle_schedule_day_selection(chat_id, username, day_text)
-            else:
-                self.handle_day_selection(chat_id, user_id, day_text)
-            
-        elif data.startswith("admin_"):
-            self.handle_admin_callback(chat_id, username, data)
-            
-        self.answer_callback_query(callback_query["id"])
-    
-    def handle_broadcast_menu(self, chat_id, username):
-        """Меню управления рассылкой"""
-        if not self.is_admin(username):
-            return
-            
-        text = (
-            "📢 <b>Система рассылки сообщений</b>\n\n"
-            "Здесь вы можете отправить сообщение всем пользователям бота.\n\n"
-            "⚠️ <b>Внимание:</b> Рассылка будет отправлена всем зарегистрированным пользователям."
-        )
-        self.send_message(chat_id, text, self.admin_broadcast_keyboard())
-    
-    def handle_admin_callback(self, chat_id, username, data):
-        if not self.is_admin(username):
-            self.log_security_event("unauthorized_admin_access", chat_id, f"Username: {username}")
-            self.send_message(chat_id, "❌ У вас нет доступа к админ-панели")
-            return
-        
-        if data == "admin_users":
-            self.show_users_list(chat_id)
-        elif data == "admin_delete_user":
-            self.start_delete_user(chat_id, username)
-        elif data == "admin_edit_schedule":
-            self.start_edit_schedule(chat_id, username)
-        elif data == "admin_manage_classes":
-            self.show_classes_management(chat_id, username)
-        elif data == "admin_bells":
-            self.show_bells_management(chat_id, username)
-        elif data == "admin_upload_excel":
-            self.send_message(
-                chat_id,
-                "📤 <b>Загрузка расписания из Excel</b>\n\n"
-                "Выберите смену для загрузки:",
-                self.shift_selection_keyboard()
-            )
-            self.admin_states[username] = {"action": "select_shift"}
-        elif data == "admin_stats":
-            self.show_statistics(chat_id)
-        elif data == "admin_back":
-            if username in self.admin_states:
-                del self.admin_states[username]
-            self.send_message(chat_id, "Главное меню", self.main_menu_keyboard())
-        elif data == "admin_add_class":
-            self.start_add_class(chat_id, username)
-        elif data == "admin_delete_class":
-            self.start_delete_class(chat_id, username)
-        elif data == "admin_edit_bell":
-            self.start_edit_bell(chat_id, username)
-        elif data == "admin_view_bells":
-            self.show_all_bells(chat_id)
-    
-    # ОБНОВЛЕННЫЙ ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ С ИИ
-    def handle_text_message(self, chat_id, user_id, username, text):
-        """Обработка текстовых сообщений с ИИ анализом"""
-        
-        # Обработка команд отмены
-        if text == "❌ Отменить":
-            if username in self.admin_states:
-                del self.admin_states[username]
-            if user_id in self.user_states:
-                del self.user_states[user_id]
-            self.send_message(chat_id, "Действие отменено", self.main_menu_keyboard())
-            return
-        
-        # Обработка состояний админа (рассылка)
-        if username in self.admin_states:
-            state = self.admin_states[username]
-            if state.get("action") == "broadcast_waiting_message":
-                self.handle_broadcast_message(chat_id, username, text)
-                return
-        
-        # Обработка пользовательских состояний
-        if user_id in self.user_states:
-            state = self.user_states[user_id]
-            if state.get("action") == "role_registration":
-                self.handle_role_registration_input(chat_id, user_id, username, text)
-                return
-        
-        # Умный ответ с ИИ для зарегистрированных пользователей
-        user_data = self.get_user(user_id)
-        if user_data:
-            # Если пользователь зарегистрирован - используем ИИ для ответа
-            response = self.get_smart_response(user_id, text)
-            self.send_message(chat_id, response, self.main_menu_keyboard())
-        else:
-            # Если не зарегистрирован - предлагаем регистрацию
-            self.handle_role_selection(chat_id, user_id)
-    
-    # ОСТАЛЬНЫЕ СУЩЕСТВУЮЩИЕ МЕТОДЫ (сохранены полностью)
     def show_classes_management(self, chat_id, username):
         text = "🏫 <b>Управление классами</b>\n\nВыберите действие:"
         self.send_message(chat_id, text, self.classes_management_inline_keyboard())
@@ -2246,6 +1732,104 @@ class SimpleSchoolBot:
                 "Например: <i>Иванов Иван Иванович, 10П</i>",
                 self.cancel_keyboard()
             )
+    
+    # ОБНОВЛЕННЫЙ ОБРАБОТЧИК CALLBACK
+    def handle_callback_query(self, update):
+        callback_query = update.get("callback_query")
+        if not callback_query:
+            return
+            
+        chat_id = callback_query["message"]["chat"]["id"]
+        user = callback_query["from"]
+        user_id = user["id"]
+        username = user.get("username", "")
+        data = callback_query["data"]
+        
+        logger.info(f"Callback received: {data} from user {username}")
+        
+        # Обработка новых callback
+        if data.startswith("toggle_"):
+            self.handle_toggle_setting(chat_id, user_id, data)
+        elif data == "my_achievements":
+            self.show_user_achievements(chat_id, user_id)
+        elif data == "achievement_progress":
+            self.show_achievement_progress(chat_id, user_id)
+        elif data == "recent_news":
+            self.show_recent_news(chat_id, user_id)
+        elif data == "news_stats":
+            self.show_news_statistics(chat_id, user_id)
+        elif data == "my_grades":
+            self.show_user_grades(chat_id, user_id)
+        elif data == "average_grade":
+            self.show_average_grades(chat_id, user_id)
+        elif data == "grades_by_subject":
+            self.show_grades_by_subject(chat_id, user_id)
+        elif data == "my_statistics":
+            self.show_detailed_statistics(chat_id, user_id)
+        elif data in ["settings_back", "achievements_back", "news_back", "diary_back", "stats_back"]:
+            self.send_message(chat_id, "Главное меню", self.main_menu_keyboard())
+        
+        # Существующие обработчики
+        elif data.startswith("day_"):
+            day_code = data[4:]
+            day_map = {
+                'monday': 'понедельник',
+                'tuesday': 'вторник', 
+                'wednesday': 'среда',
+                'thursday': 'четверг',
+                'friday': 'пятница',
+                'saturday': 'суббота'
+            }
+            day_text = day_map.get(day_code, day_code)
+            
+            if username in self.admin_states and self.admin_states[username].get("action") == "edit_schedule_day":
+                self.handle_schedule_day_selection(chat_id, username, day_text)
+            else:
+                self.handle_day_selection(chat_id, user_id, day_text)
+            
+        elif data.startswith("admin_"):
+            self.handle_admin_callback(chat_id, username, data)
+            
+        self.answer_callback_query(callback_query["id"])
+    
+    def handle_admin_callback(self, chat_id, username, data):
+        if not self.is_admin(username):
+            self.log_security_event("unauthorized_admin_access", chat_id, f"Username: {username}")
+            self.send_message(chat_id, "❌ У вас нет доступа к админ-панели")
+            return
+        
+        if data == "admin_users":
+            self.show_users_list(chat_id)
+        elif data == "admin_delete_user":
+            self.start_delete_user(chat_id, username)
+        elif data == "admin_edit_schedule":
+            self.start_edit_schedule(chat_id, username)
+        elif data == "admin_manage_classes":
+            self.show_classes_management(chat_id, username)
+        elif data == "admin_bells":
+            self.show_bells_management(chat_id, username)
+        elif data == "admin_upload_excel":
+            self.send_message(
+                chat_id,
+                "📤 <b>Загрузка расписания из Excel</b>\n\n"
+                "Выберите смену для загрузки:",
+                self.shift_selection_keyboard()
+            )
+            self.admin_states[username] = {"action": "select_shift"}
+        elif data == "admin_stats":
+            self.show_statistics(chat_id)
+        elif data == "admin_back":
+            if username in self.admin_states:
+                del self.admin_states[username]
+            self.send_message(chat_id, "Главное меню", self.main_menu_keyboard())
+        elif data == "admin_add_class":
+            self.start_add_class(chat_id, username)
+        elif data == "admin_delete_class":
+            self.start_delete_class(chat_id, username)
+        elif data == "admin_edit_bell":
+            self.start_edit_bell(chat_id, username)
+        elif data == "admin_view_bells":
+            self.show_all_bells(chat_id)
     
     # НОВЫЕ МЕТОДЫ ДЛЯ ОБРАБОТКИ CALLBACK
     def handle_toggle_setting(self, chat_id, user_id, data):
@@ -2893,7 +2477,7 @@ class SimpleSchoolBot:
                     
                     file_info = self.get_file(file_id)
                     if not file_info:
-                        self.send_message(chat_id, "❌ Ошибка получения информации о файе")
+                        self.send_message(chat_id, "❌ Ошибка получения информации о файле")
                         return
                     
                     file_content = self.download_file(file_info["file_path"])
@@ -2987,8 +2571,8 @@ class SimpleSchoolBot:
                         if not self.get_user(user_id):
                             self.handle_role_selection(chat_id, user_id)
                         else:
-                            # Умная обработка текста с ИИ
-                            self.handle_text_message(chat_id, user_id, username, text)
+                            # Старая регистрация для обратной совместимости
+                            self.handle_legacy_registration(chat_id, user_id, text)
         
         except Exception as e:
             logger.error(f"Ошибка в process_update: {e}")
@@ -3046,7 +2630,6 @@ class SimpleSchoolBot:
 
     def run(self):
         logger.info("Бот запущен со всеми функциями!")
-        logger.info(f"🤖 ИИ модель: {'доступна' if ML_AVAILABLE else 'недоступна'}")
         
         try:
             delete_url = f"{BASE_URL}/deleteWebhook"
