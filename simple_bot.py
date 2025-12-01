@@ -17,14 +17,6 @@ import pytz
 from threading import Thread
 import schedule
 
-# ОБЛЕГЧЕННАЯ ИИ МОДЕЛЬ - заменяем тяжелые transformers
-try:
-    # Пробуем легкие альтернативы
-    import numpy as np
-    ML_AVAILABLE = True
-except ImportError:
-    ML_AVAILABLE = False
-
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -51,58 +43,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-class LightweightMLModel:
-    """Облегченная версия ML модели без transformers и torch"""
-    def __init__(self):
-        self._loaded = False
-        self.sentiment_keywords = {
-            'positive': ['хорош', 'отличн', 'прекрасн', 'замечательн', 'люб', 'нравится', 'спасибо', 'супер', 'класс', 'здорово', 'удовольствие', 'рад', 'счастлив'],
-            'negative': ['плох', 'ужасн', 'отвратительн', 'ненавижу', 'не нравится', 'грустн', 'злой', 'разочарован', 'сломал', 'ошибка', 'проблема', 'неудобно', 'злит']
-        }
-    
-    def load_model(self):
-        """Минимальная загрузка - эмулируем загрузку модели"""
-        self._loaded = True
-        logger.info("✅ Lightweight ML model initialized")
-    
-    def analyze_sentiment(self, text):
-        """Упрощенный анализ настроения на основе ключевых слов"""
-        if not self._loaded:
-            self.load_model()
-            
-        text_lower = text.lower()
-        
-        positive_count = sum(1 for word in self.sentiment_keywords['positive'] if word in text_lower)
-        negative_count = sum(1 for word in self.sentiment_keywords['negative'] if word in text_lower)
-        
-        if positive_count > negative_count:
-            return "positive"
-        elif negative_count > positive_count:
-            return "negative"
-        else:
-            return "neutral"
-    
-    def get_text_intent(self, text):
-        """Определение намерения пользователя на основе ключевых слов"""
-        if not self._loaded:
-            self.load_model()
-            
-        text_lower = text.lower()
-        
-        intents = {
-            'schedule': ['расписание', 'урок', 'расписания', 'когда урок', 'во сколько', 'пары', 'занятия', 'распиcание'],
-            'weather': ['погода', 'погоду', 'температура', 'на улице', 'холодно', 'тепло', 'дождь', 'снег', 'градус'],
-            'homework': ['домашнее задание', 'домашка', 'дз', 'задание на дом', 'домашку', 'учебник'],
-            'help': ['помощь', 'помоги', 'справка', 'как пользоваться', 'что ты умеешь', 'команды'],
-            'news': ['новость', 'новости', 'объявление', 'событие', 'анонс', 'объявлен']
-        }
-        
-        for intent, keywords in intents.items():
-            if any(keyword in text_lower for keyword in keywords):
-                return intent
-                
-        return 'general'
 
 class DatabaseManager:
     def __init__(self):
@@ -173,7 +113,6 @@ class DatabaseManager:
 
     def create_tables(self):
         try:
-            # Основные таблицы (оригинальные)
             self.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -205,11 +144,9 @@ class DatabaseManager:
                 )
             """)
             
-            # Упрощенные версии дополнительных таблиц
             self.execute("""
                 CREATE TABLE IF NOT EXISTS notification_settings (
                     user_id BIGINT PRIMARY KEY,
-                    smart_notifications BOOLEAN DEFAULT FALSE,
                     weather_notifications BOOLEAN DEFAULT FALSE,
                     news_notifications BOOLEAN DEFAULT TRUE,
                     achievement_notifications BOOLEAN DEFAULT TRUE
@@ -271,7 +208,6 @@ class DatabaseManager:
                 )
             """)
             
-            # Добавляем начальные данные для звонков
             result = self.fetchone("SELECT COUNT(*) FROM bell_schedule")
             if result and result[0] == 0:
                 bell_schedule = [
@@ -290,7 +226,6 @@ class DatabaseManager:
                     )
                 logger.info("✅ Начальные данные для звонков созданы")
             
-            # Добавляем стандартные достижения
             self._create_default_achievements()
             
         except Exception as e:
@@ -298,7 +233,6 @@ class DatabaseManager:
             raise
 
     def _create_default_achievements(self):
-        """Создаем стандартные достижения"""
         default_achievements = [
             ("🎓 Первые шаги", "Зарегистрировался в системе", "🎓", "registration", 1),
             ("📚 Любознательный", "Посмотрел расписание 10 раз", "📚", "schedule_views", 10),
@@ -339,7 +273,6 @@ class SimpleSchoolBot:
         self.processed_updates = set()
         self.rate_limiter = RateLimiter()
         self.db = DatabaseManager()
-        self.ml_model = LightweightMLModel()
         
         self.init_db()
         self.setup_scheduler()
@@ -351,7 +284,6 @@ class SimpleSchoolBot:
         self.db.create_tables()
     
     def setup_scheduler(self):
-        """Настраиваем планировщик для уведомлений"""
         def run_scheduler():
             while True:
                 schedule.run_pending()
@@ -363,9 +295,7 @@ class SimpleSchoolBot:
         scheduler_thread = Thread(target=run_scheduler, daemon=True)
         scheduler_thread.start()
     
-    # СИСТЕМА РАССЫЛКИ СООБЩЕНИЙ (полностью сохранена)
     def start_broadcast(self, chat_id, username):
-        """Начало процесса рассылки"""
         if not self.is_admin(username):
             self.send_message(chat_id, "❌ У вас нет прав для рассылки сообщений")
             return
@@ -384,7 +314,6 @@ class SimpleSchoolBot:
         )
     
     def handle_broadcast_message(self, chat_id, username, text):
-        """Обработка сообщения для рассылки"""
         if username not in self.admin_states:
             return
             
@@ -411,7 +340,6 @@ class SimpleSchoolBot:
             )
     
     def execute_broadcast(self, chat_id, username):
-        """Выполнение рассылки сообщений"""
         if username not in self.admin_states:
             return
             
@@ -471,7 +399,6 @@ class SimpleSchoolBot:
             del self.admin_states[username]
     
     def get_broadcast_history(self, chat_id):
-        """Получение истории рассылок"""
         broadcasts = self.db.fetchall(
             "SELECT admin_username, message_text, sent_count, failed_count, created_at FROM broadcast_messages ORDER BY created_at DESC LIMIT 10"
         )
@@ -497,82 +424,16 @@ class SimpleSchoolBot:
         
         self.send_message(chat_id, history_text)
     
-    # ОБЛЕГЧЕННЫЕ ИИ ФУНКЦИИ
-    def analyze_user_message(self, text):
-        """Анализ сообщения пользователя с помощью облегченного ИИ"""
-        try:
-            intent = self.ml_model.get_text_intent(text)
-            sentiment = self.ml_model.analyze_sentiment(text)
-            
-            return {
-                "intent": intent,
-                "sentiment": sentiment,
-                "needs_attention": sentiment == "negative"
-            }
-        except Exception as e:
-            logger.error(f"Ошибка ИИ анализа: {e}")
-            return {
-                "intent": "general",
-                "sentiment": "neutral", 
-                "needs_attention": False
-            }
-    
-    def get_smart_response(self, user_id, text):
-        """Умный ответ на основе ИИ анализа"""
-        analysis = self.analyze_user_message(text)
-        user_data = self.get_user(user_id)
-        
-        self.db.execute(
-            "INSERT INTO user_activity (user_id, action_type, details) VALUES (?, ?, ?)",
-            (user_id, "ai_analysis", f"intent: {analysis['intent']}, sentiment: {analysis['sentiment']}")
-        )
-        
-        responses = {
-            'schedule': {
-                'positive': "📚 Рад, что ты интересуешься расписанием! Используй кнопку '📚 Моё расписание' для быстрого доступа.",
-                'negative': "📚 Похоже, тебе не нравится расписание? Можешь посмотреть его в разделе '📚 Моё расписание' - там всегда актуальная информация.",
-                'neutral': "📚 Расписание уроков доступно в разделе '📚 Моё расписание'. Там же можно посмотреть расписание для любого класса."
-            },
-            'weather': {
-                'positive': f"🌤️ {self.get_weather()} Отличная погода для учебы!",
-                'negative': f"🌤️ {self.get_weather()} Надеюсь, погода скоро улучшится!",
-                'neutral': f"🌤️ {self.get_weather()}"
-            },
-            'homework': {
-                'positive': "📝 Вижу, ты ответственно относишься к урокам! К сожалению, информация о домашних заданиях пока не в системе.",
-                'negative': "📝 Домашние задания бывают сложными... Если нужна помощь, обратись к учителям через бота.",
-                'neutral': "📝 Информация о домашних заданиях скоро появится в системе. Пока можешь уточнить у одноклассников или учителей."
-            },
-            'general': {
-                'positive': "😊 Рад общению с тобой! Чем еще могу помочь?",
-                'negative': "😔 Похоже, что-то не так... Если нужна помощь, напиши /help или обратись к администраторам.",
-                'neutral': "🤖 Я школьный бот! Используй меню для навигации или напиши /help для справки."
-            }
-        }
-        
-        intent_responses = responses.get(analysis['intent'], responses['general'])
-        response = intent_responses.get(analysis['sentiment'], intent_responses['neutral'])
-        
-        sentiment_emojis = {
-            'positive': "✨",
-            'negative': "💫", 
-            'neutral': "🌟"
-        }
-        
-        return f"{sentiment_emojis.get(analysis['sentiment'], '🌟')} {response}"
-    
-    # ФУНКЦИИ - УМНЫЕ УВЕДОМЛЕНИЯ (сохранены)
     def get_notification_settings(self, user_id):
         result = self.db.fetchone(
-            "SELECT smart_notifications, weather_notifications, news_notifications, achievement_notifications FROM notification_settings WHERE user_id = ?",
+            "SELECT weather_notifications, news_notifications, achievement_notifications FROM notification_settings WHERE user_id = ?",
             (user_id,)
         )
         if result:
             return {
-                'smart_notifications': result[0],
-                'weather_notifications': result[1],
-                'news_notifications': result[2],
-                'achievement_notifications': result[3]
+                'weather_notifications': result[0],
+                'news_notifications': result[1],
+                'achievement_notifications': result[2]
             }
         else:
             self.db.execute(
@@ -580,7 +441,6 @@ class SimpleSchoolBot:
                 (user_id,)
             )
             return {
-                'smart_notifications': False,
                 'weather_notifications': False,
                 'news_notifications': True,
                 'achievement_notifications': True
@@ -589,18 +449,16 @@ class SimpleSchoolBot:
     def update_notification_settings(self, user_id, settings):
         self.db.execute(
             """INSERT INTO notification_settings 
-            (user_id, smart_notifications, weather_notifications, news_notifications, achievement_notifications) 
-            VALUES (?, ?, ?, ?, ?)
+            (user_id, weather_notifications, news_notifications, achievement_notifications) 
+            VALUES (?, ?, ?, ?)
             ON CONFLICT (user_id) DO UPDATE SET
-            smart_notifications = EXCLUDED.smart_notifications,
             weather_notifications = EXCLUDED.weather_notifications,
             news_notifications = EXCLUDED.news_notifications,
             achievement_notifications = EXCLUDED.achievement_notifications""",
-            (user_id, settings.get('smart_notifications', False), settings.get('weather_notifications', False),
+            (user_id, settings.get('weather_notifications', False),
              settings.get('news_notifications', True), settings.get('achievement_notifications', True))
         )
     
-    # ФУНКЦИИ - ШКОЛЬНЫЕ НОВОСТИ (сохранены)
     def add_news(self, title, content, author, target_audience="all"):
         self.db.execute(
             "INSERT INTO school_news (title, content, author, target_audience) VALUES (?, ?, ?, ?)",
@@ -635,7 +493,6 @@ class SimpleSchoolBot:
             message = f"📰 <b>Новая школьная новость</b>\n\n<b>{self.safe_message(title)}</b>\n\n{self.safe_message(content)}"
             self.send_message(user[0], message)
     
-    # ФУНКЦИИ - СИСТЕМА ДОСТИЖЕНИЙ (сохранены)
     def check_achievements(self, user_id, action_type, value=1):
         achievements = self.db.fetchall(
             "SELECT id, name, description, icon, condition_type, condition_value FROM achievements WHERE condition_type = ?",
@@ -703,7 +560,6 @@ class SimpleSchoolBot:
             ORDER BY ua.achieved_at DESC
         """, (user_id,))
     
-    # ФУНКЦИИ - ПОГОДА (сохранены)
     def get_weather(self):
         if not WEATHER_API_KEY:
             return "🌤️ Погода в Самаре: сервис погоды не настроен"
@@ -738,7 +594,6 @@ class SimpleSchoolBot:
         for user in users:
             self.send_message(user[0], weather_message)
     
-    # ФУНКЦИИ - СТАТИСТИКА ПОСЕЩЕНИЙ (сохранены)
     def log_user_activity(self, user_id, action_type, details=None):
         self.db.execute(
             "INSERT INTO user_activity (user_id, action_type, details) VALUES (?, ?, ?)",
@@ -776,7 +631,6 @@ class SimpleSchoolBot:
             'last_active': last_active[0] if last_active else None
         }
     
-    # СУЩЕСТВУЮЩИЕ МЕТОДЫ (оригинальные 800+ строк полностью сохранены)
     def format_date(self, date_obj):
         if not date_obj:
             return "неизвестно"
@@ -991,7 +845,6 @@ class SimpleSchoolBot:
     def is_admin(self, username):
         return username and username.lower() in [admin.lower() for admin in ADMINS]
     
-    # ОСНОВНЫЕ КЛАВИАТУРЫ (сохранены)
     def main_menu_keyboard(self):
         return {
             "keyboard": [
@@ -1022,7 +875,6 @@ class SimpleSchoolBot:
     def notifications_settings_keyboard(self):
         return {
             "inline_keyboard": [
-                [{"text": "🔔 Умные уведомления", "callback_data": "toggle_smart"}],
                 [{"text": "🌤️ Уведомления о погоде", "callback_data": "toggle_weather"}],
                 [{"text": "📰 Новости школы", "callback_data": "toggle_news"}],
                 [{"text": "🏆 Достижения", "callback_data": "toggle_achievements"}],
@@ -1184,7 +1036,6 @@ class SimpleSchoolBot:
             logger.error(f"Ошибка обновления расписания звонков: {e}")
             return False
 
-    # ОРИГИНАЛЬНЫЙ ПАРСЕР EXCEL (полностью сохранен)
     def parse_excel_schedule(self, file_content, shift):
         try:
             import pandas as pd
@@ -1542,7 +1393,6 @@ class SimpleSchoolBot:
             logger.error(f"Ошибка импорта из Excel для смены {shift}: {e}")
             return False, f"Ошибка импорта для {shift} смены: {str(e)}"
 
-    # ВОССТАНОВЛЕННЫЕ ОБРАБОТЧИКИ (полностью)
     def handle_start(self, chat_id, user):
         user_data = self.get_user(user["id"])
         
@@ -1576,7 +1426,7 @@ class SimpleSchoolBot:
             "• /help - показать эту справку\n\n"
             "<b>Новые возможности:</b>\n"
             "• <b>📰 Новости</b> - школьные новости и объявления\n"
-            "• <b>⚙️ Настройки</b> - умные уведомления и предпочтения\n"
+            "• <b>⚙️ Настройки</b> - уведомления и предпочтения\n"
             "• <b>🏆 Достижения</b> - система наград за активность\n"
             "• <b>📈 Статистика</b> - ваша активность и прогресс\n\n"
             "<b>Классические функции:</b>\n"
@@ -1616,7 +1466,6 @@ class SimpleSchoolBot:
         
         logger.info(f"Callback received: {data} from user {username}")
         
-        # Обработка callback для рассылки
         if data == "admin_broadcast_menu":
             self.handle_broadcast_menu(chat_id, username)
         elif data == "admin_broadcast":
@@ -1630,7 +1479,6 @@ class SimpleSchoolBot:
                 del self.admin_states[username]
             self.send_message(chat_id, "❌ Рассылка отменена", self.admin_menu_inline_keyboard())
         
-        # Обработка остальных callback
         elif data.startswith("toggle_"):
             self.handle_toggle_setting(chat_id, user_id, data)
         elif data == "my_achievements":
@@ -1646,7 +1494,6 @@ class SimpleSchoolBot:
         elif data in ["settings_back", "achievements_back", "news_back", "stats_back"]:
             self.send_message(chat_id, "Главное меню", self.main_menu_keyboard())
         
-        # Существующие обработчики
         elif data.startswith("day_"):
             day_code = data[4:]
             day_map = {
@@ -1728,25 +1575,21 @@ class SimpleSchoolBot:
             self.send_message(chat_id, "Действие отменено", self.main_menu_keyboard())
             return
         
-        # Обработка состояний админа (рассылка)
         if username in self.admin_states:
             state = self.admin_states[username]
             if state.get("action") == "broadcast_waiting_message":
                 self.handle_broadcast_message(chat_id, username, text)
                 return
         
-        # Обработка пользовательских состояний (регистрация)
         if user_id in self.user_states:
             state = self.user_states[user_id]
             if state.get("action") == "registration":
                 self.handle_registration_input(chat_id, user_id, username, text)
                 return
         
-        # Умный ответ с ИИ для зарегистрированных пользователей
         user_data = self.get_user(user_id)
         if user_data:
-            response = self.get_smart_response(user_id, text)
-            self.send_message(chat_id, response, self.main_menu_keyboard())
+            self.send_message(chat_id, "🤖 Я школьный бот! Используй меню для навигации или напиши /help для справки.", self.main_menu_keyboard())
         else:
             self.handle_registration_start(chat_id, user_id)
     
@@ -1784,7 +1627,6 @@ class SimpleSchoolBot:
         if user_id in self.user_states:
             del self.user_states[user_id]
 
-    # ВОССТАНОВЛЕННЫЕ МЕТОДЫ ДЛЯ ДОПОЛНИТЕЛЬНЫХ ФУНКЦИЙ
     def show_classes_management(self, chat_id, username):
         text = "🏫 <b>Управление классами</b>\n\nВыберите действие:"
         self.send_message(chat_id, text, self.classes_management_inline_keyboard())
@@ -1969,13 +1811,11 @@ class SimpleSchoolBot:
     def handle_notifications_settings(self, chat_id, user_id):
         settings = self.get_notification_settings(user_id)
         
-        smart_status = "✅ ВКЛ" if settings['smart_notifications'] else "❌ ВЫКЛ"
         weather_status = "✅ ВКЛ" if settings['weather_notifications'] else "❌ ВЫКЛ"
         news_status = "✅ ВКЛ" if settings['news_notifications'] else "❌ ВЫКЛ"
         achievements_status = "✅ ВКЛ" if settings['achievement_notifications'] else "❌ ВЫКЛ"
         
         text = (f"⚙️ <b>Настройки уведомлений</b>\n\n"
-               f"🔔 Умные уведомления: {smart_status}\n"
                f"🌤️ Погода: {weather_status}\n"
                f"📰 Новости: {news_status}\n"
                f"🏆 Достижения: {achievements_status}\n\n"
@@ -2026,7 +1866,6 @@ class SimpleSchoolBot:
     def handle_toggle_setting(self, chat_id, user_id, data):
         settings = self.get_notification_settings(user_id)
         setting_map = {
-            "toggle_smart": "smart_notifications",
             "toggle_weather": "weather_notifications", 
             "toggle_news": "news_notifications",
             "toggle_achievements": "achievement_notifications"
@@ -2559,7 +2398,6 @@ class SimpleSchoolBot:
                         self.send_message(chat_id, "Действие отменено", self.main_menu_keyboard())
                         return
                     
-                    # Обработка админских состояний
                     if username in self.admin_states:
                         state = self.admin_states[username]
                         
@@ -2587,14 +2425,12 @@ class SimpleSchoolBot:
                             self.handle_shift_selection(chat_id, username, text)
                             return
                     
-                    # Обработка пользовательских состояний
                     if user_id in self.user_states:
                         state = self.user_states[user_id]
                         if state.get("action") == "registration":
                             self.handle_registration_input(chat_id, user_id, username, text)
                             return
                     
-                    # Обработка команд
                     if text.startswith("/start"):
                         self.handle_start(chat_id, user)
                     elif text.startswith("/help"):
@@ -2623,8 +2459,7 @@ class SimpleSchoolBot:
             logger.error(traceback.format_exc())
     
     def run(self):
-        logger.info("Бот запущен со всеми функциями!")
-        logger.info(f"🤖 ИИ модель: {'доступна (облегченная)' if ML_AVAILABLE else 'недоступна'}")
+        logger.info("Бот запущен!")
         
         try:
             delete_url = f"{BASE_URL}/deleteWebhook"
