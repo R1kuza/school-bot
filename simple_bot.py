@@ -94,8 +94,6 @@ class LightweightMLModel:
             'schedule': ['расписание', 'урок', 'расписания', 'когда урок', 'во сколько', 'пары', 'занятия', 'распиcание'],
             'weather': ['погода', 'погоду', 'температура', 'на улице', 'холодно', 'тепло', 'дождь', 'снег', 'градус'],
             'homework': ['домашнее задание', 'домашка', 'дз', 'задание на дом', 'домашку', 'учебник'],
-            'grades': ['оценка', 'оценки', 'отметка', 'балл', 'дневник', 'успеваемость', 'отметки'],
-            'teacher': ['учитель', 'преподаватель', 'педагог', 'учителя', 'препода'],
             'help': ['помощь', 'помоги', 'справка', 'как пользоваться', 'что ты умеешь', 'команды'],
             'news': ['новость', 'новости', 'объявление', 'событие', 'анонс', 'объявлен']
         }
@@ -181,7 +179,6 @@ class DatabaseManager:
                     user_id BIGINT PRIMARY KEY,
                     full_name TEXT NOT NULL,
                     class TEXT NOT NULL,
-                    role TEXT DEFAULT 'user',
                     username TEXT,
                     registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -262,19 +259,6 @@ class DatabaseManager:
             """)
             
             self.execute("""
-                CREATE TABLE IF NOT EXISTS student_grades (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    subject TEXT NOT NULL,
-                    grade INTEGER NOT NULL,
-                    grade_type TEXT NOT NULL,
-                    lesson_date DATE NOT NULL,
-                    teacher_comment TEXT,
-                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            self.execute("""
                 CREATE TABLE IF NOT EXISTS broadcast_messages (
                     id SERIAL PRIMARY KEY,
                     admin_username TEXT NOT NULL,
@@ -319,7 +303,6 @@ class DatabaseManager:
             ("🎓 Первые шаги", "Зарегистрировался в системе", "🎓", "registration", 1),
             ("📚 Любознательный", "Посмотрел расписание 10 раз", "📚", "schedule_views", 10),
             ("⭐ Активный ученик", "Использовал бота 50 раз", "⭐", "total_actions", 50),
-            ("🏆 Отличник", "Получил 5 хороших оценок", "🏆", "good_grades", 5),
             ("📰 Информированный", "Прочитал все новости", "📰", "news_read", 10),
             ("🌦️ Метеоролог", "Включил уведомления о погоде", "🌦️", "weather_enabled", 1)
         ]
@@ -560,11 +543,6 @@ class SimpleSchoolBot:
                 'negative': "📝 Домашние задания бывают сложными... Если нужна помощь, обратись к учителям через бота.",
                 'neutral': "📝 Информация о домашних заданиях скоро появится в системе. Пока можешь уточнить у одноклассников или учителей."
             },
-            'grades': {
-                'positive': "📊 Отличные оценки - это здорово! Продолжай в том же духе!",
-                'negative': "📊 Не расстраивайся из-за оценок! Главное - понимать материал. Оценки всегда можно улучшить.",
-                'neutral': "📊 Работа с оценками доступна в разделе '📊 Дневник'. Там можно посмотреть статистику успеваемости."
-            },
             'general': {
                 'positive': "😊 Рад общению с тобой! Чем еще могу помочь?",
                 'negative': "😔 Похоже, что-то не так... Если нужна помощь, напиши /help или обратись к администраторам.",
@@ -686,12 +664,6 @@ class SimpleSchoolBot:
                 (user_id,)
             )
             return result[0] if result else 0
-        elif condition_type == "good_grades":
-            result = self.db.fetchone(
-                "SELECT COUNT(*) FROM student_grades WHERE user_id = ? AND grade >= 4",
-                (user_id,)
-            )
-            return result[0] if result else 0
         elif condition_type == "news_read":
             result = self.db.fetchone(
                 "SELECT COUNT(*) FROM user_activity WHERE user_id = ? AND action_type = 'news_read'",
@@ -804,49 +776,6 @@ class SimpleSchoolBot:
             'last_active': last_active[0] if last_active else None
         }
     
-    # ФУНКЦИИ - ЭЛЕКТРОННЫЙ ДНЕВНИК (сохранены)
-    def add_grade(self, user_id, subject, grade, grade_type, lesson_date, teacher_comment=None):
-        self.db.execute(
-            """INSERT INTO student_grades (user_id, subject, grade, grade_type, lesson_date, teacher_comment) 
-            VALUES (?, ?, ?, ?, ?, ?)""",
-            (user_id, subject, grade, grade_type, lesson_date, teacher_comment)
-        )
-        
-        if grade >= 4:
-            self.check_achievements(user_id, "good_grades")
-    
-    def get_student_grades(self, user_id, subject=None, limit=20):
-        if subject:
-            return self.db.fetchall(
-                """SELECT subject, grade, grade_type, lesson_date, teacher_comment 
-                FROM student_grades 
-                WHERE user_id = ? AND subject = ? 
-                ORDER BY lesson_date DESC LIMIT ?""",
-                (user_id, subject, limit)
-            )
-        else:
-            return self.db.fetchall(
-                """SELECT subject, grade, grade_type, lesson_date, teacher_comment 
-                FROM student_grades 
-                WHERE user_id = ? 
-                ORDER BY lesson_date DESC LIMIT ?""",
-                (user_id, limit)
-            )
-    
-    def get_student_average_grade(self, user_id, subject=None):
-        if subject:
-            result = self.db.fetchone(
-                "SELECT AVG(grade) FROM student_grades WHERE user_id = ? AND subject = ?",
-                (user_id, subject)
-            )
-        else:
-            result = self.db.fetchone(
-                "SELECT AVG(grade) FROM student_grades WHERE user_id = ?",
-                (user_id,)
-            )
-        
-        return round(result[0], 2) if result and result[0] else 0.0
-
     # СУЩЕСТВУЮЩИЕ МЕТОДЫ (оригинальные 800+ строк полностью сохранены)
     def format_date(self, date_obj):
         if not date_obj:
@@ -1069,7 +998,7 @@ class SimpleSchoolBot:
                 [{"text": "📚 Моё расписание"}, {"text": "🏫 Общее расписание"}],
                 [{"text": "🔔 Звонки"}, {"text": "📰 Новости"}],
                 [{"text": "⚙️ Настройки"}, {"text": "🏆 Достижения"}],
-                [{"text": "📊 Дневник"}, {"text": "📈 Статистика"}],
+                [{"text": "📈 Статистика"}],
                 [{"text": "ℹ️ Помощь"}]
             ],
             "resize_keyboard": True
@@ -1116,16 +1045,6 @@ class SimpleSchoolBot:
                 [{"text": "📰 Последние новости", "callback_data": "recent_news"}],
                 [{"text": "📊 Статистика новостей", "callback_data": "news_stats"}],
                 [{"text": "⬅️ Назад", "callback_data": "news_back"}]
-            ]
-        }
-    
-    def diary_keyboard(self):
-        return {
-            "inline_keyboard": [
-                [{"text": "📊 Мои оценки", "callback_data": "my_grades"}],
-                [{"text": "📈 Средний балл", "callback_data": "average_grade"}],
-                [{"text": "📚 По предметам", "callback_data": "grades_by_subject"}],
-                [{"text": "⬅️ Назад", "callback_data": "diary_back"}]
             ]
         }
     
@@ -1659,7 +1578,6 @@ class SimpleSchoolBot:
             "• <b>📰 Новости</b> - школьные новости и объявления\n"
             "• <b>⚙️ Настройки</b> - умные уведомления и предпочтения\n"
             "• <b>🏆 Достижения</b> - система наград за активность\n"
-            "• <b>📊 Дневник</b> - электронный дневник с оценками\n"
             "• <b>📈 Статистика</b> - ваша активность и прогресс\n\n"
             "<b>Классические функции:</b>\n"
             "• <b>Моё расписание</b> - расписание для твоего класса\n"
@@ -1723,15 +1641,9 @@ class SimpleSchoolBot:
             self.show_recent_news(chat_id, user_id)
         elif data == "news_stats":
             self.show_news_statistics(chat_id, user_id)
-        elif data == "my_grades":
-            self.show_user_grades(chat_id, user_id)
-        elif data == "average_grade":
-            self.show_average_grades(chat_id, user_id)
-        elif data == "grades_by_subject":
-            self.show_grades_by_subject(chat_id, user_id)
         elif data == "my_statistics":
             self.show_detailed_statistics(chat_id, user_id)
-        elif data in ["settings_back", "achievements_back", "news_back", "diary_back", "stats_back"]:
+        elif data in ["settings_back", "achievements_back", "news_back", "stats_back"]:
             self.send_message(chat_id, "Главное меню", self.main_menu_keyboard())
         
         # Существующие обработчики
@@ -2040,9 +1952,6 @@ class SimpleSchoolBot:
         elif text == "🏆 Достижения":
             self.handle_achievements_menu(chat_id, user_id)
         
-        elif text == "📊 Дневник":
-            self.handle_diary_menu(chat_id, user_id)
-        
         elif text == "📈 Статистика":
             self.handle_statistics_menu(chat_id, user_id)
         
@@ -2099,21 +2008,6 @@ class SimpleSchoolBot:
         
         self.send_message(chat_id, text, self.news_keyboard())
     
-    def handle_diary_menu(self, chat_id, user_id):
-        avg_grade = self.get_student_average_grade(user_id)
-        total_grades = self.db.fetchone(
-            "SELECT COUNT(*) FROM student_grades WHERE user_id = ?",
-            (user_id,)
-        )
-        total_grades = total_grades[0] if total_grades else 0
-        
-        text = (f"📊 <b>Электронный дневник</b>\n\n"
-               f"📈 Средний балл: {avg_grade}\n"
-               f"📚 Всего оценок: {total_grades}\n\n"
-               f"Здесь вы можете посмотреть свои оценки и успеваемость.")
-        
-        self.send_message(chat_id, text, self.diary_keyboard())
-    
     def handle_statistics_menu(self, chat_id, user_id):
         stats = self.get_user_statistics(user_id)
         achievements = len(self.get_user_achievements(user_id))
@@ -2162,7 +2056,7 @@ class SimpleSchoolBot:
         self.send_message(chat_id, text, self.achievements_keyboard())
 
     def show_achievement_progress(self, chat_id, user_id):
-        achievement_types = ["registration", "schedule_views", "total_actions", "good_grades", "news_read", "weather_enabled"]
+        achievement_types = ["registration", "schedule_views", "total_actions", "news_read", "weather_enabled"]
         text = "📊 <b>Ваш прогресс по достижениям</b>\n\n"
         
         for achievement_type in achievement_types:
@@ -2219,73 +2113,6 @@ class SimpleSchoolBot:
             text += "💡 Читайте больше новостей, чтобы быть в курсе!"
         
         self.send_message(chat_id, text, self.news_keyboard())
-
-    def show_user_grades(self, chat_id, user_id):
-        grades = self.get_student_grades(user_id, limit=10)
-        
-        if not grades:
-            self.send_message(chat_id, "📊 У вас пока нет оценок.", self.diary_keyboard())
-            return
-        
-        text = "📊 <b>Ваши последние оценки</b>\n\n"
-        for subject, grade, grade_type, lesson_date, comment in grades:
-            date_str = self.format_date(lesson_date)
-            grade_emoji = "🟢" if grade >= 4 else "🟡" if grade == 3 else "🔴"
-            text += f"{grade_emoji} <b>{subject}</b>: {grade} ({grade_type})\n"
-            if comment:
-                text += f"💬 {comment}\n"
-            text += f"📅 {date_str}\n\n"
-        
-        self.send_message(chat_id, text, self.diary_keyboard())
-
-    def show_average_grades(self, chat_id, user_id):
-        overall_avg = self.get_student_average_grade(user_id)
-        
-        subjects = self.db.fetchall(
-            "SELECT DISTINCT subject FROM student_grades WHERE user_id = ?",
-            (user_id,)
-        )
-        
-        text = f"📈 <b>Средние баллы</b>\n\n"
-        text += f"📊 Общий средний балл: {overall_avg}\n\n"
-        
-        if subjects:
-            text += "<b>По предметам:</b>\n"
-            for subject_row in subjects:
-                subject = subject_row[0]
-                subject_avg = self.get_student_average_grade(user_id, subject)
-                text += f"• {subject}: {subject_avg}\n"
-        
-        self.send_message(chat_id, text, self.diary_keyboard())
-
-    def show_grades_by_subject(self, chat_id, user_id):
-        subjects = self.db.fetchall(
-            "SELECT DISTINCT subject FROM student_grades WHERE user_id = ? ORDER BY subject",
-            (user_id,)
-        )
-        
-        if not subjects:
-            self.send_message(chat_id, "📚 У вас пока нет оценок по предметам.", self.diary_keyboard())
-            return
-        
-        text = "📚 <b>Оценки по предметам</b>\n\n"
-        
-        for subject_row in subjects:
-            subject = subject_row[0]
-            grades = self.get_student_grades(user_id, subject, limit=5)
-            avg_grade = self.get_student_average_grade(user_id, subject)
-            
-            text += f"<b>{subject}</b> (средний: {avg_grade}):\n"
-            
-            grade_list = []
-            for _, grade, grade_type, lesson_date, _ in grades:
-                date_str = self.format_date(lesson_date)
-                grade_emoji = "🟢" if grade >= 4 else "🟡" if grade == 3 else "🔴"
-                grade_list.append(f"{grade_emoji} {grade} ({grade_type}) - {date_str}")
-            
-            text += ", ".join(grade_list) + "\n\n"
-        
-        self.send_message(chat_id, text, self.diary_keyboard())
 
     def show_detailed_statistics(self, chat_id, user_id):
         stats = self.get_user_statistics(user_id)
@@ -2775,7 +2602,7 @@ class SimpleSchoolBot:
                     elif text.startswith("/admin_panel"):
                         self.handle_admin_panel(chat_id, username)
                     elif text in ["📚 Моё расписание", "🏫 Общее расписание", "🔔 Звонки", "📰 Новости", 
-                                "⚙️ Настройки", "🏆 Достижения", "📊 Дневник", "📈 Статистика", "ℹ️ Помощь"]:
+                                "⚙️ Настройки", "🏆 Достижения", "📈 Статистика", "ℹ️ Помощь"]:
                         self.handle_main_menu(chat_id, user_id, text, username)
                     elif text in ["👥 Список пользователей", "❌ Удалить пользователя", "📝 Редактировать расписание", 
                                   "🏫 Управление классами", "🕧 Управление звонками", "📤 Загрузить Excel", "📊 Статистика", "⬅️ Назад"]:
